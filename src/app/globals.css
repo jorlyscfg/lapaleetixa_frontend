@@ -1,0 +1,473 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f3f4f6;
+  --foreground: #0f172a;
+
+  /* Modo Claro: Paleta Premium inspirada en Skote, Frest y Dashtic */
+  --color-slate-50: #0f172a;   /* Texto principal de alto énfasis (Dark Slate) */
+  --color-slate-100: #1e293b;  /* Texto de títulos secundarios */
+  --color-slate-200: #334155;  /* Texto de párrafos y etiquetas */
+  --color-slate-300: #475569;  /* Texto de apoyo e iconos */
+  --color-slate-400: #64748b;  /* Inactivos y subtítulos */
+  --color-slate-500: #94a3b8;  /* Muted / placeholders */
+  --color-slate-600: #cbd5e1;  /* Bordes secundarios extremadamente suaves */
+  --color-slate-700: #cbd5e1;  /* Bordes principales definidos */
+  --color-slate-800: #e2e8f0;  /* Bordes de tarjetas (más suaves y elegantes) */
+  --color-slate-850: #f1f5f9;  /* Gris de separación para elevación (súper sutil) */
+  --color-slate-900: #f3f4f6;  /* Fondo de la página principal (gris frío tridimensional) */
+  --color-slate-950: #ffffff;  /* Fondo de tarjetas, modales y headers (blanco puro) */
+
+  /* Variables de sombra dinámica para Modo Claro (azul pizarra suave) */
+  --shadow-color: 15, 23, 42;
+  --shadow-opacity-factor: 0.04;
+}
+
+.dark {
+  --background: #020617;
+  --foreground: #f1f5f9;
+
+  /* Modo Oscuro (original de la aplicación con máxima profundidad) */
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-850: #182235;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+
+  /* Variables de sombra dinámica para Modo Oscuro (negro profundo) */
+  --shadow-color: 0, 0, 0;
+  --shadow-opacity-factor: 0.35;
+}
+
+/* ==========================================
+   REGLAS GLOBALES DE CONTRASTE Y LEGIBILIDAD
+   ========================================== */
+
+/* Entradas e Inputs de Formulario */
+html:not(.dark) input,
+html:not(.dark) textarea,
+html:not(.dark) select {
+  color: var(--color-slate-50) !important;
+  background-color: var(--color-slate-950) !important;
+  border-color: var(--color-slate-800) !important;
+}
+
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: var(--color-slate-500) !important;
+}
+
+/* Evitar textos invisibles sobre fondos claros */
+html:not(.dark) .text-white:not(button):not(a),
+html:not(.dark) .text-slate-100 { color: var(--color-slate-100) !important; }
+html:not(.dark) .text-slate-200 { color: var(--color-slate-200) !important; }
+html:not(.dark) .text-slate-300 { color: var(--color-slate-300) !important; }
+html:not(.dark) .text-slate-350 { color: var(--color-slate-300) !important; }
+html:not(.dark) .text-slate-400 { color: var(--color-slate-400) !important; }
+html:not(.dark) .text-slate-450 { color: var(--color-slate-300) !important; }
+html:not(.dark) .text-slate-500 { color: var(--color-slate-400) !important; }
+html:not(.dark) .text-slate-550 { color: var(--color-slate-400) !important; }
+
+/* Mapeos de contraste para badges e indicadores de color */
+html:not(.dark) .text-indigo-400 { color: #4f46e5 !important; }
+html:not(.dark) .text-sky-400 { color: #0284c7 !important; }
+html:not(.dark) .text-sky-450 { color: #0284c7 !important; }
+html:not(.dark) .text-emerald-400 { color: #059669 !important; }
+html:not(.dark) .text-amber-400 { color: #d97706 !important; }
+html:not(.dark) .text-red-400 { color: #dc2626 !important; }
+
+/* Bordes en Modo Claro */
+html:not(.dark) .border-slate-800 { border-color: var(--color-slate-800) !important; }
+html:not(.dark) .border-slate-850 { border-color: var(--color-slate-850) !important; }
+html:not(.dark) .border-slate-900 { border-color: var(--color-slate-850) !important; }
+
+/* ========================================================
+   OVERRAID DE BOTONES GLOBALES PARA MODO CLARO & HOVERS
+   ======================================================== */
+
+/* Sobrescribir botones oscuros hardcodeados para lucir premium y legibles */
+html:not(.dark) button.bg-slate-800,
+html:not(.dark) button.bg-slate-900,
+html:not(.dark) button.bg-slate-950,
+html:not(.dark) button.bg-slate-900\/25,
+html:not(.dark) button.bg-slate-900\/40,
+html:not(.dark) button.bg-slate-950\/80,
+html:not(.dark) a.bg-slate-800,
+html:not(.dark) a.bg-slate-900,
+html:not(.dark) a.bg-slate-950 {
+  background-color: var(--color-slate-900) !important;
+  color: var(--color-slate-200) !important;
+  border: 1px solid var(--color-slate-800) !important;
+  box-shadow: 0 1px 2px 0 rgba(var(--shadow-color), calc(var(--shadow-opacity-factor) * 0.5)) !important;
+}
+
+/* Hovers de botones premium en modo claro */
+html:not(.dark) button.bg-slate-800:hover,
+html:not(.dark) button.bg-slate-900:hover,
+html:not(.dark) button.bg-slate-950:hover,
+html:not(.dark) button.bg-slate-900\/25:hover,
+html:not(.dark) button.bg-slate-900\/40:hover,
+html:not(.dark) button.bg-slate-950\/80:hover,
+html:not(.dark) a.bg-slate-800:hover,
+html:not(.dark) a.bg-slate-900:hover,
+html:not(.dark) a.bg-slate-950:hover {
+  background-color: var(--color-slate-850) !important;
+  color: var(--color-slate-50) !important;
+  border-color: var(--color-slate-700) !important;
+}
+
+/* Corregir hovers que forzaban hover:text-white en modo claro */
+html:not(.dark) .hover\:text-white:hover {
+  color: var(--color-slate-50) !important;
+}
+
+html:not(.dark) button.hover\:text-white:hover,
+html:not(.dark) a.hover\:text-white:hover {
+  color: var(--color-slate-50) !important;
+}
+
+/* Overrides para botones rojos (bg-red-X) en Modo Claro */
+html:not(.dark) button.bg-red-500,
+html:not(.dark) button.bg-red-600,
+html:not(.dark) button.bg-red-650,
+html:not(.dark) a.bg-red-500,
+html:not(.dark) a.bg-red-600,
+html:not(.dark) a.bg-red-650 {
+  background-color: #ef4444 !important;
+  color: #ffffff !important;
+  border: 1px solid #dc2626 !important;
+  box-shadow: 0 1px 2px 0 rgba(239, 68, 68, 0.15) !important;
+}
+
+html:not(.dark) button.bg-red-500:hover,
+html:not(.dark) button.bg-red-600:hover,
+html:not(.dark) button.bg-red-650:hover,
+html:not(.dark) a.bg-red-500:hover,
+html:not(.dark) a.bg-red-600:hover,
+html:not(.dark) a.bg-red-650:hover {
+  background-color: #dc2626 !important;
+  border-color: #b91c1c !important;
+}
+
+/* ========================================================
+   OVERRIDE DE BOTONES GLOBALES PARA MODO OSCURO & HOVERS
+   ======================================================== */
+
+/* Garantizar bordes finos de alta calidad, elevación y hovers con transiciones suaves en modo oscuro */
+html.dark button.bg-slate-800,
+html.dark button.bg-slate-900,
+html.dark button.bg-slate-950,
+html.dark button.bg-slate-900\/25,
+html.dark button.bg-slate-900\/40,
+html.dark button.bg-slate-950\/80,
+html.dark a.bg-slate-800,
+html.dark a.bg-slate-900,
+html.dark a.bg-slate-950 {
+  background-color: var(--color-slate-900) !important;
+  color: var(--color-slate-100) !important;
+  border: 1px solid var(--color-slate-800) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Hovers de botones premium en modo oscuro */
+html.dark button.bg-slate-800:hover,
+html.dark button.bg-slate-900:hover,
+html.dark button.bg-slate-950:hover,
+html.dark button.bg-slate-900\/25:hover,
+html.dark button.bg-slate-900\/40:hover,
+html.dark button.bg-slate-950\/80:hover,
+html.dark a.bg-slate-800:hover,
+html.dark a.bg-slate-900:hover,
+html.dark a.bg-slate-950:hover {
+  background-color: var(--color-slate-850) !important;
+  color: var(--color-slate-50) !important;
+  border-color: var(--color-slate-700) !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Overrides para botones rojos (bg-red-X) en Modo Oscuro */
+html.dark button.bg-red-500,
+html.dark button.bg-red-600,
+html.dark button.bg-red-650,
+html.dark a.bg-red-500,
+html.dark a.bg-red-600,
+html.dark a.bg-red-650 {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+  border: 1px solid #b91c1c !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+html.dark button.bg-red-500:hover,
+html.dark button.bg-red-600:hover,
+html.dark button.bg-red-650:hover,
+html.dark a.bg-red-500:hover,
+html.dark a.bg-red-600:hover,
+html.dark a.bg-red-650:hover {
+  background-color: #b91c1c !important;
+  border-color: #991b1b !important;
+}
+
+/* ==========================
+   CONFIGURACIÓN DE TEMAS V4
+   ========================== */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Sombras de Elevación Premium Dinámicas */
+  --shadow-sm: 0 1px 2px 0 rgba(var(--shadow-color), calc(var(--shadow-opacity-factor) * 0.8));
+  --shadow-md: 0 4px 6px -1px rgba(var(--shadow-color), var(--shadow-opacity-factor)), 0 2px 4px -2px rgba(var(--shadow-color), var(--shadow-opacity-factor));
+  --shadow-lg: 0 10px 15px -3px rgba(var(--shadow-color), calc(var(--shadow-opacity-factor) * 0.9)), 0 4px 6px -4px rgba(var(--shadow-color), calc(var(--shadow-opacity-factor) * 0.9));
+  --shadow-xl: 0 20px 25px -5px rgba(var(--shadow-color), calc(var(--shadow-opacity-factor) * 0.8)), 0 8px 10px -6px rgba(var(--shadow-color), calc(var(--shadow-opacity-factor) * 0.8));
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Custom scrollbar styling globally */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-slate-950);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-slate-800);
+  border-radius: 9999px;
+  border: 2px solid var(--color-slate-950);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-slate-700);
+}
+
+/* For Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-slate-800) var(--color-slate-950);
+}
+
+/* Animation classes */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ========================================================
+   SISTEMA DE PESTAÑAS GLOBAL PREMIUM (TABS & TOGGLES)
+   ======================================================= */
+
+.tab-container {
+  display: flex;
+  background-color: var(--color-slate-950);
+  padding: 0.375rem; /* p-1.5 */
+  border-radius: 1rem; /* rounded-2xl */
+  border: 1px solid var(--color-slate-850);
+  align-self: flex-start;
+  box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+  gap: 0.25rem;
+}
+
+.tab-button {
+  padding: 0.625rem 1.25rem; /* px-5 py-2.5 */
+  border-radius: 0.75rem; /* rounded-xl */
+  font-size: 0.875rem; /* text-sm */
+  font-weight: 700; /* font-bold */
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--color-slate-400) !important;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  outline: none;
+  user-select: none;
+}
+
+.tab-button:active {
+  transform: scale(0.95);
+}
+
+.tab-button:hover {
+  color: var(--color-slate-100) !important;
+}
+
+/* Estado Activo de las Pestañas */
+.tab-button.active {
+  background-color: var(--color-slate-800) !important;
+  color: var(--color-slate-50) !important;
+  font-weight: 900; /* font-black */
+  box-shadow: 0 4px 6px -1px rgba(var(--shadow-color), var(--shadow-opacity-factor)), 
+              0 2px 4px -2px rgba(var(--shadow-color), var(--shadow-opacity-factor)) !important;
+}
+
+/* ========================================================
+   SISTEMA DE DISEÑO RESPONSIVO MÓVIL-FIRST GLOBAL
+   ======================================================= */
+
+@media (max-width: 768px) {
+  /* 1. Optimización de Espaciados y Paddings en Móviles */
+  .p-8, .p-6, .p-5 {
+    padding: 1rem !important; /* Equivalente a p-4 */
+  }
+  .px-8, .px-6, .px-5 {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+  .py-12, .py-8, .py-6 {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1.5rem !important;
+  }
+  .gap-6 {
+    gap: 1rem !important; /* Equivalente a gap-4 */
+  }
+  
+  /* 2. Suavizado de Bordes de Tarjetas en Móviles */
+  .rounded-3xl {
+    border-radius: 1rem !important; /* rounded-2xl */
+  }
+  .rounded-2xl {
+    border-radius: 0.75rem !important; /* rounded-xl */
+  }
+  
+  /* 3. Swipeable Horizontal Tab Strip (Pestañas Deslizantes) */
+  .tab-container {
+    width: 100% !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none !important; /* Ocultar scrollbar en Firefox */
+    align-self: stretch !important;
+    -webkit-overflow-scrolling: touch !important; /* Scroll inercial suave en iOS */
+  }
+  .tab-container::-webkit-scrollbar {
+    display: none !important; /* Ocultar scrollbar en Chrome/Safari */
+  }
+  .tab-button {
+    flex-shrink: 0 !important; /* Evitar que las pestañas se encojan */
+  }
+
+  /* 4. Transformar Contenedores Flex Complejos en Grillas Dashboard Estructuradas */
+  .flex.flex-wrap.items-center.justify-between.xl\:justify-end.gap-6 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.75rem !important;
+    width: 100% !important;
+  }
+  
+  /* Cada indicador de la tarjeta se convierte en una mini-tarjeta iOS/Android style */
+  .flex.flex-wrap.items-center.justify-between.xl\:justify-end.gap-6 > .text-right,
+  .flex.flex-wrap.items-center.justify-between.xl\:justify-end.gap-6 > .text-left {
+    text-align: left !important;
+    background-color: var(--color-slate-900);
+    padding: 0.75rem 1rem !important;
+    border-radius: 0.75rem !important;
+    border: 1px solid var(--color-slate-850);
+  }
+  
+  /* Los botones de acción se posicionan al final ocupando las 2 columnas */
+  .flex.flex-wrap.items-center.justify-between.xl\:justify-end.gap-6 > .flex.items-center.gap-2 {
+    grid-column: span 2 !important;
+    width: 100% !important;
+    justify-content: stretch !important;
+    gap: 0.5rem !important;
+    margin-top: 0.25rem;
+  }
+  
+  .flex.flex-wrap.items-center.justify-between.xl\:justify-end.gap-6 > .flex.items-center.gap-2 > button {
+    flex: 1 1 0% !important;
+    width: 100% !important;
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+  }
+
+  /* 5. Blindaje de Desbordamiento de Tablas (Scroll Horizontal Suave) */
+  table {
+    display: block !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* 6. Optimización del Menú Lateral en Pantallas Ultra-Pequeñas */
+  .fixed.inset-y-0.left-0.w-80 {
+    width: 17rem !important;
+  }
+}
+
+/* ========================================================
+   ESTILOS DE IMPRESIÓN PROFESIONALES (TICKET TÉRMICO 80mm)
+   ======================================================= */
+@media print {
+  /* Ocultar elementos de pantalla e interfaces */
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Forzar tamaño de página al ancho exacto del ticket de 80mm */
+  @page {
+    size: 80mm auto;
+    margin: 0 !important;
+  }
+
+  /* Asegurar que el contenedor de impresión sea el único visible */
+  .print-ticket-container {
+    display: block !important;
+    width: 72mm !important;
+    margin: 0 auto !important;
+    padding: 10px 4px !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Ajustar imágenes para impresión monocromática */
+  img {
+    filter: grayscale(100%) !important;
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  /* Ocultar scrollbars y cabeceras de navegador */
+  ::-webkit-scrollbar {
+    display: none !important;
+  }
+}
+
