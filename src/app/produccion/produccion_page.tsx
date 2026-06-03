@@ -35,6 +35,8 @@ export default function ProduccionPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [showDisabled, setShowDisabled] = useState(false);
+
   const [saasConfig, setSaasConfig] = useState<FeatureConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
 
@@ -381,15 +383,15 @@ export default function ProduccionPage() {
     }
   }, [saasConfig, configLoading, router]);
 
-  // 4. Consultar artículos del grupo 'Products' activos en ERPNext (filtrando plantillas con has_variants=0)
+  // 4. Consultar artículos del grupo 'Products' en ERPNext (filtrando plantillas con has_variants=0)
   const { data: items, isLoading: itemsLoading, mutate: mutateItems } = useFrappeGetDocList("Item", {
-    fields: ["name", "item_name", "item_group", "image", "standard_rate", "has_variants"],
+    fields: ["name", "item_name", "item_group", "image", "standard_rate", "has_variants", "disabled"],
     filters: [
-      ["disabled", "=", 0],
+      ...(showDisabled ? [] : [["disabled", "=", 0]]),
       ["item_group", "=", "Products"],
       ["has_variants", "=", 0],
       ["name", "!=", "Carrito Paletero"]
-    ],
+    ] as any,
     limit: 150
   });
 
@@ -853,6 +855,26 @@ export default function ProduccionPage() {
     }
   };
 
+  // Reactivar Producto desactivado
+  const handleReactivateProduct = async (item: any) => {
+    if (!item) return;
+    
+    setCrudSubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      await updateDoc("Item", item.name, { disabled: 0 });
+      setSuccessMessage(`¡Producto "${item.item_name}" reactivado con éxito!`);
+      await mutateItems();
+    } catch (err: any) {
+      console.error("Error al reactivar producto:", err);
+      setErrorMessage(err.message || "No se pudo reactivar el producto.");
+    } finally {
+      setCrudSubmitting(false);
+    }
+  };
+
   const activeColor = saasConfig?.colors?.primary || "#3498db";
 
   // Filtrado reactivo en el buscador (multiterminos)
@@ -1197,18 +1219,34 @@ export default function ProduccionPage() {
 
             {/* Buscador y Contador en el catálogo */}
             <div className="flex flex-col gap-4 bg-slate-950 p-4 sm:p-6 rounded-3xl border border-slate-850 shadow-xl sm:flex-row sm:items-center sm:justify-between">
-              {/* Buscador */}
-              <div className="relative w-full sm:max-w-xs">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar producto en catálogo..."
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-all focus:border-slate-700"
-                />
-                <svg className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center w-full sm:max-w-xl">
+                {/* Buscador */}
+                <div className="relative w-full sm:max-w-xs">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar producto en catálogo..."
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-all focus:border-slate-700"
+                  />
+                  <svg className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+
+                {/* Toggle de Desactivados */}
+                <div className="flex items-center gap-2">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showDisabled}
+                      onChange={(e) => setShowDisabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-655 peer-checked:after:bg-white"></div>
+                    <span className="ml-2 text-xs font-bold text-slate-400 select-none">Mostrar inactivos</span>
+                  </label>
+                </div>
               </div>
 
               {/* Contador */}
@@ -1256,7 +1294,7 @@ export default function ProduccionPage() {
                       const wholesalePrice = getItemWholesalePrice(item.name);
                       const stock = getItemStock(item.name);
                       return (
-                        <tr key={item.name} className="hover:bg-slate-900/35 transition-colors">
+                        <tr key={item.name} className={`hover:bg-slate-900/35 transition-colors ${item.disabled ? "opacity-50 grayscale" : ""}`}>
                           {/* Image */}
                           <td className="px-6 py-4">
                             <div className="h-12 w-16 rounded-xl bg-slate-900 border border-slate-880 flex items-center justify-center text-slate-700 overflow-hidden relative">
@@ -1286,7 +1324,14 @@ export default function ProduccionPage() {
 
                           {/* Name */}
                           <td className="px-6 py-4 text-sm font-bold text-white">
-                            {item.item_name}
+                            <div className="flex items-center gap-2">
+                              {item.item_name}
+                              {item.disabled === 1 && (
+                                <span className="text-[9px] bg-red-950 text-red-400 border border-red-900 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
+                                  Inactivo
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           {/* Retail Price */}
@@ -1340,19 +1385,33 @@ export default function ProduccionPage() {
                                 </svg>
                               </button>
 
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedItem(item);
-                                  setShowDeleteConfirm(true);
-                                }}
-                                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:bg-red-500/10 hover:border-red-500/25 hover:text-red-400 transition-all active:scale-95 cursor-pointer"
-                                title="Eliminar"
-                              >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
+                              {item.disabled === 1 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleReactivateProduct(item)}
+                                  className="p-2 rounded-xl bg-indigo-950 border border-indigo-900 text-indigo-405 hover:bg-indigo-900 hover:text-white transition-all active:scale-95 cursor-pointer animate-pulse"
+                                  title="Activar"
+                                  disabled={crudSubmitting}
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18V4" />
+                                  </svg>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedItem(item);
+                                    setShowDeleteConfirm(true);
+                                  }}
+                                  className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:bg-red-500/10 hover:border-red-500/25 hover:text-red-400 transition-all active:scale-95 cursor-pointer"
+                                  title="Eliminar"
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
