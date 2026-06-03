@@ -49,6 +49,28 @@ export default function ProduccionPage() {
   // Estado de Pestaña Activa (Solo Administradores pueden cambiar)
   const [activeTab, setActiveTab] = useState<"produccion" | "catalogo" | "variantes">("produccion");
 
+  // Almacén seleccionado para control de stock
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>("Fabrica - LP");
+
+  // Consultar dinámicamente los almacenes de la compañía
+  const { data: dbWarehouses, isLoading: warehousesLoading } = useFrappeGetDocList("Warehouse", {
+    fields: ["name", "warehouse_name"],
+    filters: [
+      ["company", "=", "La Paletixa"],
+      ["is_group", "=", 0],
+      ["disabled", "=", 0]
+    ],
+    limit: 100
+  });
+
+  const getWarehouseLabel = (name: string) => {
+    const cleanName = name.replace(" - LP", "");
+    if (cleanName.startsWith("Fabrica")) return `🏭 ${cleanName}`;
+    if (cleanName.startsWith("Distribucion")) return `📦 ${cleanName}`;
+    if (cleanName.startsWith("Sucursal")) return `🍦 ${cleanName}`;
+    return `🏪 ${cleanName}`;
+  };
+
   // Estados de Modales para CRUD
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -417,10 +439,10 @@ export default function ProduccionPage() {
     limit: 1000
   });
 
-  // 5. Consultar los Bins de stock actuales en 'Fabrica - LP'
+  // 5. Consultar los Bins de stock actuales en el almacén seleccionado
   const { data: bins, isLoading: binsLoading, mutate: mutateBins } = useFrappeGetDocList("Bin", {
     fields: ["item_code", "actual_qty"],
-    filters: [["warehouse", "=", "Fabrica - LP"]],
+    filters: [["warehouse", "=", selectedWarehouse]],
     limit: 200
   });
 
@@ -522,7 +544,7 @@ export default function ProduccionPage() {
         uom: "Unit",
         allow_zero_valuation_rate: 1,
         ...(qty > 0 ? { basic_rate: price } : {}),
-        [qty > 0 ? "t_warehouse" : "s_warehouse"]: "Fabrica - LP"
+        [qty > 0 ? "t_warehouse" : "s_warehouse"]: selectedWarehouse
       };
 
       if (qty > 0) {
@@ -543,7 +565,7 @@ export default function ProduccionPage() {
             purpose: "Material Receipt",
             stock_entry_type: "Material Receipt", // Mandatorio en ERPNext v16
             docstatus: 1, // Auto-submit to update stock ledger immediately
-            to_warehouse: "Fabrica - LP",
+            to_warehouse: selectedWarehouse,
             items: positiveAdjustments
           })
         );
@@ -557,7 +579,7 @@ export default function ProduccionPage() {
             purpose: "Material Issue",
             stock_entry_type: "Material Issue", // Mandatorio en ERPNext v16
             docstatus: 1, // Auto-submit to update stock ledger immediately
-            from_warehouse: "Fabrica - LP",
+            from_warehouse: selectedWarehouse,
             items: negativeAdjustments
           })
         );
@@ -997,10 +1019,43 @@ export default function ProduccionPage() {
             <div className="flex flex-col gap-4 bg-slate-950 p-4 sm:p-6 rounded-3xl border border-slate-850 shadow-xl md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
                 <h2 className="text-lg font-bold text-white">Gestión Rápida de Inventario</h2>
-                <p className="text-xs text-slate-400">Aumentá o disminuí el stock disponible del almacén de la Fábrica con un solo clic.</p>
+                <p className="text-xs text-slate-400">
+                  {selectedWarehouse === "Fabrica - LP"
+                    ? "Aumentá o disminuí el stock disponible del almacén de la Fábrica con un solo clic."
+                    : `Ajustando el stock del almacén: ${getWarehouseLabel(selectedWarehouse).replace(/🏭|🍦|📦|🏪/g, "").trim()}.`}
+                </p>
               </div>
 
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                {/* Selector de Almacén (Solo para administradores) */}
+                {isAdmin && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-400 whitespace-nowrap">Almacén:</span>
+                    {warehousesLoading ? (
+                      <div className="h-10 w-32 animate-pulse rounded-xl bg-slate-900 border border-slate-800"></div>
+                    ) : (
+                      <select
+                        value={selectedWarehouse}
+                        onChange={(e) => {
+                          setSelectedWarehouse(e.target.value);
+                          setStockAdjustments({}); // Limpiar cambios no guardados
+                        }}
+                        className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-xs font-extrabold text-white outline-none focus:border-slate-700 transition-all cursor-pointer"
+                      >
+                        {dbWarehouses && dbWarehouses.length > 0 ? (
+                          dbWarehouses.map((w: any) => (
+                            <option key={w.name} value={w.name} className="bg-slate-900 text-white">
+                              {getWarehouseLabel(w.name)}
+                            </option>
+                          ))
+                        ) : (
+                          <option value="Fabrica - LP" className="bg-slate-900 text-white">🏭 Fabrica - LP</option>
+                        )}
+                      </select>
+                    )}
+                  </div>
+                )}
+
                 {/* Buscador */}
                 <div className="relative w-full sm:max-w-xs">
                   <input
@@ -1301,7 +1356,11 @@ export default function ProduccionPage() {
                     <th className="px-6 py-4">Nombre del Producto</th>
                     <th className="px-6 py-4 text-right">Precio Menudeo</th>
                     <th className="px-6 py-4 text-right">Precio Mayoreo</th>
-                    <th className="px-6 py-4 text-center">Stock Fábrica</th>
+                    <th className="px-6 py-4 text-center">
+                      {selectedWarehouse === "Fabrica - LP"
+                        ? "Stock Fábrica"
+                        : `Stock ${getWarehouseLabel(selectedWarehouse).replace(/🏭|🍦|📦|🏪/g, "").trim()}`}
+                    </th>
                     <th className="px-6 py-4 text-center">Acciones</th>
                   </tr>
                 </thead>
