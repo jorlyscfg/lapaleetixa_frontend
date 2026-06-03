@@ -3,32 +3,17 @@
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
-
-interface FeatureConfig {
-  client_name: string;
-  colors: {
-    primary: string;
-  };
-  features: {
-    pos: boolean;
-    production: boolean;
-    logistics: boolean;
-    reservations?: boolean;
-    wholesale?: boolean;
-  };
-}
+import { useSaaSConfig } from "./providers";
 
 export default function HomePage() {
   const { currentUser, login, logout, isLoading: authLoading, error: authError } = useFrappeAuth();
+  const { saasConfig, configLoading } = useSaaSConfig();
   const router = useRouter();
   
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-
-  const [saasConfig, setSaasConfig] = useState<FeatureConfig | null>(null);
-  const [configLoading, setConfigLoading] = useState(true);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
 
   // Cargar tema inicial
@@ -100,28 +85,7 @@ export default function HomePage() {
     checkCustomerProfile();
   }, [currentUser, router]);
 
-  // Cargar configuraciones de marca blanca y feature flags desde el backend
-  useEffect(() => {
-    async function fetchConfig() {
-      try {
-        const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
-        const res = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.get_features`, {
-          cache: "no-store"
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.message) {
-            setSaasConfig(data.message);
-          }
-        }
-      } catch (err) {
-        console.error("Error cargando configuración SaaS:", err);
-      } finally {
-        setConfigLoading(false);
-      }
-    }
-    fetchConfig();
-  }, [currentUser]);
+  // La configuración de SaaS se maneja de forma global mediante useSaaSConfig
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

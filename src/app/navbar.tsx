@@ -3,28 +3,14 @@
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth } from "frappe-react-sdk";
 import { useRouter, usePathname } from "next/navigation";
-
-interface FeatureConfig {
-  client_name: string;
-  colors: {
-    primary: string;
-  };
-  features: {
-    pos: boolean;
-    production: boolean;
-    logistics: boolean;
-    reservations?: boolean;
-    wholesale?: boolean;
-    allow_pos_out_of_stock?: boolean;
-  };
-}
+import { useSaaSConfig } from "./providers";
 
 export function Navbar() {
   const { currentUser, logout } = useFrappeAuth();
+  const { saasConfig } = useSaaSConfig();
   const router = useRouter();
   const pathname = usePathname();
 
-  const [saasConfig, setSaasConfig] = useState<FeatureConfig | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isCustomer, setIsCustomer] = useState(false);
@@ -165,27 +151,7 @@ export function Navbar() {
     }
   };
 
-  // Cargar configuraciones del backend
-  useEffect(() => {
-    if (!currentUser) return;
-    async function fetchConfig() {
-      try {
-        const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
-        const res = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.get_features`, {
-          cache: "no-store"
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.message) {
-            setSaasConfig(data.message);
-          }
-        }
-      } catch (err) {
-        console.error("Error cargando configuración SaaS:", err);
-      }
-    }
-    fetchConfig();
-  }, [currentUser]);
+  // La configuración de SaaS se maneja de forma global mediante useSaaSConfig
 
   // Verificar si es un cliente mayorista
   useEffect(() => {

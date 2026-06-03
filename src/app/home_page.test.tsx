@@ -26,6 +26,22 @@ vi.mock('frappe-react-sdk', () => ({
   }),
 }));
 
+// Mock useSaaSConfig variables
+let mockSaasConfig: any = {
+  client_name: 'La Paletixa Test',
+  colors: { primary: '#3498db' },
+  features: { pos: true, production: true }
+};
+let mockConfigLoading = false;
+
+vi.mock('./providers', () => ({
+  useSaaSConfig: () => ({
+    saasConfig: mockSaasConfig,
+    configLoading: mockConfigLoading,
+    refreshConfig: vi.fn(),
+  }),
+}));
+
 // Mock fetch for brand features config
 global.fetch = vi.fn().mockImplementation(() =>
   Promise.resolve({
