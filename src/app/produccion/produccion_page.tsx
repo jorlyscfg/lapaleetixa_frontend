@@ -194,12 +194,13 @@ export default function ProduccionPage() {
     setSuccessMessage(null);
 
     try {
-      const res = await createItemTemplate({
+      const rawRes = await createItemTemplate({
         template_name: newTemplateName,
         attributes_list: newTemplateAttrs
       });
+      const res = rawRes?.message || rawRes;
 
-      if (res.success) {
+      if (res && res.success) {
         setSuccessMessage(`¡Plantilla de producto "${res.item_name}" creada con éxito!`);
         setNewTemplateName("");
         setNewTemplateAttrs([]);
@@ -230,13 +231,14 @@ export default function ProduccionPage() {
     setSuccessMessage(null);
 
     try {
-      const res = await addAttributeValue({
+      const rawRes = await addAttributeValue({
         attribute_name: selectedAttributeForValue,
         value_name: newAttrValName,
         value_abbr: newAttrValAbbr
       });
+      const res = rawRes?.message || rawRes;
 
-      if (res.success) {
+      if (res && res.success) {
         setSuccessMessage(`¡Valor "${res.value}" (${res.abbr}) agregado con éxito a ${res.attribute}!`);
         setNewAttrValName("");
         setNewAttrValAbbr("");
@@ -313,8 +315,18 @@ export default function ProduccionPage() {
         }
       }
 
+      // Validar si ya existe localmente activa antes de llamar a la API
+      const expectedCode = getGeneratedVariantCode();
+      if (expectedCode) {
+        const existingLocalItem = items?.find(item => item.name === expectedCode);
+        if (existingLocalItem && existingLocalItem.disabled === 0) {
+          setErrorMessage(`El producto "${existingLocalItem.item_name}" (${expectedCode}) ya existe y está activo en tu catálogo.`);
+          return;
+        }
+      }
+
       // 3. Crear variante en ERPNext con la imagen vinculada
-      const res = await createCustomVariant({
+      const rawRes = await createCustomVariant({
         template_name: selectedTemplate,
         attribute_values: selectedValues,
         retail_price: varRetailPrice,
@@ -322,8 +334,9 @@ export default function ProduccionPage() {
         image: uploadedImageUrl || null,
         barcode: varBarcode || null
       });
+      const res = rawRes?.message || rawRes;
 
-      if (res.success) {
+      if (res && res.success) {
         setSuccessMessage(`¡Variante "${res.item_name}" (${res.item_code}) creada con éxito con su imagen y precios asociados!`);
         // Limpiar formulario
         setSelectedValues({});
@@ -336,9 +349,9 @@ export default function ProduccionPage() {
         }
         setImagePreviewUrl(null);
         // Mutar datos generales para actualizar el catálogo principal al instante
-        mutateItems();
-        mutatePrices();
-        mutateBarcodes();
+        await mutateItems();
+        await mutatePrices();
+        await mutateBarcodes();
       }
     } catch (err: any) {
       console.error("Error al crear variante:", err);
@@ -873,6 +886,17 @@ export default function ProduccionPage() {
     } finally {
       setCrudSubmitting(false);
     }
+  };
+
+  const getGeneratedVariantCode = () => {
+    if (!selectedTemplate) return "";
+    const abbrs = Object.keys(selectedValues).map(k => {
+      const attr = attributes?.find((a: any) => a.attribute === k);
+      const valObj = attr?.values.find((v: any) => v.value === selectedValues[k]);
+      return valObj ? valObj.abbr : "";
+    });
+    if (abbrs.includes("") || abbrs.length === 0) return "";
+    return `${selectedTemplate}-${abbrs.join("-")}`;
   };
 
   const activeColor = saasConfig?.colors?.primary || "#3498db";
@@ -1634,26 +1658,41 @@ export default function ProduccionPage() {
                   </div>
 
                   {/* Botón de Enviar */}
-                  <button
-                    type="submit"
-                    disabled={varCreating || !selectedTemplate || !varRetailPrice}
-                    className="w-full rounded-2xl py-4 text-sm font-bold text-white shadow-xl transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40 cursor-pointer flex items-center justify-center gap-2"
-                    style={{ backgroundColor: activeColor }}
-                  >
-                    {varCreating ? (
-                      <>
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                        Generando variantes en ERPNext...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                        </svg>
-                        Crear Variante
-                      </>
-                    )}
-                  </button>
+                  {(() => {
+                    const expectedCode = getGeneratedVariantCode();
+                    const existingLocalItem = expectedCode ? items?.find(item => item.name === expectedCode) : null;
+                    const isVariantActive = existingLocalItem && existingLocalItem.disabled === 0;
+
+                    return (
+                      <button
+                        type="submit"
+                        disabled={varCreating || !selectedTemplate || !varRetailPrice || isVariantActive}
+                        className="w-full rounded-2xl py-4 text-sm font-bold text-white shadow-xl transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40 cursor-pointer flex items-center justify-center gap-2"
+                        style={{ backgroundColor: isVariantActive ? "#1e293b" : activeColor }}
+                      >
+                        {varCreating ? (
+                          <>
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                            Generando variantes en ERPNext...
+                          </>
+                        ) : isVariantActive ? (
+                          <>
+                            <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            Variante ya existente
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Crear Variante
+                          </>
+                        )}
+                      </button>
+                    );
+                  })()}
                 </form>
               </div>
 
@@ -1700,6 +1739,18 @@ export default function ProduccionPage() {
                             return valObj ? valObj.abbr : "?";
                           }).join("-")}</strong>
                         </p>
+                        {(() => {
+                          const expectedCode = getGeneratedVariantCode();
+                          const existingLocalItem = expectedCode ? items?.find(item => item.name === expectedCode) : null;
+                          if (existingLocalItem && existingLocalItem.disabled === 0) {
+                            return (
+                              <div className="text-[10px] text-amber-500 font-bold flex items-center gap-1 mt-1 bg-amber-500/5 p-2 rounded-xl border border-amber-500/10">
+                                <span>⚠️ Esta variante ya está activa en tu catálogo.</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
 
                       {/* Pricing block */}
