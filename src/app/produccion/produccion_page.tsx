@@ -1321,7 +1321,7 @@ export default function ProduccionPage() {
                         <tr key={item.name} className={`hover:bg-slate-900/35 transition-colors ${item.disabled ? "opacity-50 grayscale" : ""}`}>
                           {/* Image */}
                           <td className="px-6 py-4">
-                            <div className="h-12 w-16 rounded-xl bg-slate-900 border border-slate-880 flex items-center justify-center text-slate-700 overflow-hidden relative">
+                            <div className="h-12 w-12 rounded-xl bg-slate-900 border border-slate-880 flex items-center justify-center text-slate-700 overflow-hidden relative">
                               {item.image ? (
                                 <img
                                   src={item.image.startsWith("http") ? item.image : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${item.image}`}
