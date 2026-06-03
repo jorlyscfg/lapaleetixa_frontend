@@ -754,10 +754,10 @@ export default function ReservasPage() {
                   return (
                     <div
                       key={p.name}
-                      className="group rounded-2xl border border-slate-850 bg-slate-900/20 hover:bg-slate-900/40 p-3 flex flex-col justify-between hover:border-slate-750 transition-all hover:scale-[1.01] h-[225px]"
+                      className="group rounded-2xl border border-slate-850 bg-slate-900/20 hover:bg-slate-900/40 p-3 flex flex-col justify-between hover:border-slate-750 transition-all hover:scale-[1.01] h-[260px]"
                     >
                       {/* Imagen con Aspect Ratio */}
-                      <div className="aspect-video w-full rounded-xl bg-slate-950 flex items-center justify-center overflow-hidden relative border border-slate-850">
+                      <div className="aspect-square w-full rounded-xl bg-slate-950 flex items-center justify-center overflow-hidden relative border border-slate-850">
                         {imageUrl ? (
                           <img
                             src={imageUrl}
