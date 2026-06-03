@@ -846,11 +846,25 @@ export default function ProduccionPage() {
 
   const activeColor = saasConfig?.colors?.primary || "#3498db";
 
-  // Filtrado reactivo en el buscador
-  const filteredItems = items?.filter(item => 
-    item.item_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
-  ) || [];
+  // Filtrado reactivo en el buscador (multiterminos)
+  const filteredItems = items?.filter(item => {
+    if (!searchQuery) return true;
+    
+    const name = (item.name || "").toLowerCase();
+    const itemName = (item.item_name || "").toLowerCase();
+    const barcode = (getItemBarcode(item.name) || "").toLowerCase();
+    
+    const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    
+    return terms.every(term => 
+      name.includes(term) || 
+      itemName.includes(term) || 
+      barcode.includes(term)
+    );
+  }) || [];
+
+  const totalItemsCount = items?.length || 0;
+  const filteredCount = filteredItems.length;
 
   if (authLoading || configLoading || itemsLoading || binsLoading || pricesLoading || barcodesLoading) {
     return (
@@ -874,6 +888,7 @@ export default function ProduccionPage() {
             <button
               onClick={() => {
                 setActiveTab("produccion");
+                setSearchQuery("");
                 setSuccessMessage(null);
                 setErrorMessage(null);
               }}
@@ -884,6 +899,7 @@ export default function ProduccionPage() {
             <button
               onClick={() => {
                 setActiveTab("catalogo");
+                setSearchQuery("");
                 setSuccessMessage(null);
                 setErrorMessage(null);
               }}
@@ -894,6 +910,7 @@ export default function ProduccionPage() {
             <button
               onClick={() => {
                 setActiveTab("variantes");
+                setSearchQuery("");
                 setSuccessMessage(null);
                 setErrorMessage(null);
               }}
@@ -1166,6 +1183,39 @@ export default function ProduccionPage() {
                   </svg>
                   Agregar Producto
                 </button>
+              </div>
+            </div>
+
+            {/* Buscador y Contador en el catálogo */}
+            <div className="flex flex-col gap-4 bg-slate-950 p-4 sm:p-6 rounded-3xl border border-slate-850 shadow-xl sm:flex-row sm:items-center sm:justify-between">
+              {/* Buscador */}
+              <div className="relative w-full sm:max-w-xs">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar producto en catálogo..."
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-all focus:border-slate-700"
+                />
+                <svg className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+
+              {/* Contador */}
+              <div className="flex items-center gap-2 bg-slate-900 px-4 py-2.5 rounded-2xl border border-slate-850 shadow-inner">
+                <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 002 2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                {searchQuery ? (
+                  <span className="text-xs font-bold text-slate-300">
+                    Encontrados: <strong className="text-white text-sm">{filteredCount}</strong> de <strong className="text-slate-400">{totalItemsCount}</strong> productos
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-slate-350">
+                    Total: <strong className="text-white text-sm">{totalItemsCount}</strong> productos registrados
+                  </span>
+                )}
               </div>
             </div>
 
