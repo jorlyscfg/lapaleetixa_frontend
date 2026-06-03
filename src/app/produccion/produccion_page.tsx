@@ -816,16 +816,24 @@ export default function ProduccionPage() {
     setSuccessMessage(null);
 
     try {
-      // 1. Buscar y borrar todos los precios asociados (minorista y mayorista)
-      const associatedPrices = prices?.filter(p => p.item_code === selectedItem.name) || [];
-      for (const p of associatedPrices) {
-        await deleteDoc("Item Price", p.name);
+      try {
+        // 1. Buscar y borrar todos los precios asociados (minorista y mayorista)
+        const associatedPrices = prices?.filter(p => p.item_code === selectedItem.name) || [];
+        for (const p of associatedPrices) {
+          await deleteDoc("Item Price", p.name);
+        }
+
+        // 2. Borrar Item físicamente
+        await deleteDoc("Item", selectedItem.name);
+        setSuccessMessage(`¡Producto "${selectedItem.item_name}" eliminado físicamente con éxito!`);
+      } catch (deleteErr: any) {
+        console.warn("Fallo el borrado físico por integridad, desactivándolo lógicamente...", deleteErr);
+        
+        // Si falla por integridad (transacciones existentes), caemos elegantemente a desactivación lógica (disabled = 1)
+        await updateDoc("Item", selectedItem.name, { disabled: 1 });
+        setSuccessMessage(`¡Producto "${selectedItem.item_name}" desactivado con éxito debido a que tiene transacciones asociadas!`);
       }
 
-      // 2. Borrar Item
-      await deleteDoc("Item", selectedItem.name);
-
-      setSuccessMessage(`¡Producto "${selectedItem.item_name}" eliminado con éxito!`);
       setShowDeleteConfirm(false);
       setSelectedItem(null);
       
@@ -834,10 +842,10 @@ export default function ProduccionPage() {
       await mutatePrices();
       await mutateBins();
     } catch (err: any) {
-      console.error("Error al eliminar producto:", err);
+      console.error("Error al eliminar/desactivar producto:", err);
       setErrorMessage(
         err.message || 
-        "No se pudo eliminar el producto. Recordá que si el producto tiene historial de stock, Frappe bloquea la baja física por integridad."
+        "No se pudo eliminar ni desactivar el producto. Por favor verifique los permisos."
       );
       setShowDeleteConfirm(false);
     } finally {
