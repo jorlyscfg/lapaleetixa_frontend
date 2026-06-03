@@ -266,7 +266,8 @@ export default function POSPage() {
     filters: [
       ["disabled", "=", 0],
       ["item_group", "=", "Products"],
-      ["has_variants", "=", 0]
+      ["has_variants", "=", 0],
+      ["name", "!=", "Carrito Paletero"]
     ],
     limit: 150
   });
