@@ -103,6 +103,13 @@ export default function POSPage() {
   const [openingBalances, setOpeningBalances] = useState<{[key: string]: number}>({});
   const [closingBalances, setClosingBalances] = useState<{[key: string]: number}>({});
 
+  // === ESTADOS PARA CONVERSIÓN DE MONEDA USD ===
+  const [usdExchangeRate, setUsdExchangeRate] = useState<number>(0);
+  const [inputUsdRate, setInputUsdRate] = useState<string>("");
+  const [payInUsd, setPayInUsd] = useState<boolean>(false);
+  const [usdAmountPaid, setUsdAmountPaid] = useState<number>(0);
+  const [tempUsdRate, setTempUsdRate] = useState<string>("");
+
   // === ESTADOS PARA CLIENTES OPCIONALES ===
   const [selectedCustomer, setSelectedCustomer] = useState<string>("Público General");
   const [customerQuery, setCustomerQuery] = useState("");
@@ -132,6 +139,9 @@ export default function POSPage() {
     amountPaid: number;
     changeDue: number;
     paymentMode: string;
+    payInUsd?: boolean;
+    usdAmountPaid?: number;
+    usdExchangeRate?: number;
   }
   const [printedTicket, setPrintedTicket] = useState<PrintedTicketData | null>(null);
   const [showTicketModal, setShowTicketModal] = useState(false);
@@ -178,8 +188,18 @@ export default function POSPage() {
       if (opening) {
         setActiveOpening(opening);
         setShowOpeningModal(false);
+        const savedRate = localStorage.getItem(`pos_usd_rate_${opening.name}`);
+        if (savedRate) {
+          setUsdExchangeRate(parseFloat(savedRate) || 0);
+          setInputUsdRate(savedRate);
+        } else {
+          setUsdExchangeRate(0);
+          setInputUsdRate("");
+        }
       } else {
         setActiveOpening(null);
+        setUsdExchangeRate(0);
+        setInputUsdRate("");
         // Preparar balance inicial de apertura
         const initialBalances: {[key: string]: number} = {};
         profile.payment_methods.forEach((pm: any) => {
@@ -497,11 +517,15 @@ export default function POSPage() {
         mode_of_payment: mop,
         opening_amount: val
       }));
-      await callFrappeAPI("create_pos_opening", {
+      const res = await callFrappeAPI("create_pos_opening", {
         pos_profile: posProfile.pos_profile,
         company: posProfile.company,
         balance_details: details
       });
+      if (res && res.name && inputUsdRate) {
+        localStorage.setItem(`pos_usd_rate_${res.name}`, inputUsdRate);
+        setUsdExchangeRate(parseFloat(inputUsdRate) || 0);
+      }
       setSuccessMessage("¡Turno de caja abierto con éxito!");
       await loadPOSProfileAndShift();
     } catch (err: any) {
@@ -526,6 +550,7 @@ export default function POSPage() {
         pos_opening_entry: activeOpening.name,
         closing_details: details
       });
+      localStorage.removeItem(`pos_usd_rate_${activeOpening.name}`);
       setSuccessMessage("¡Turno cerrado y arqueado con éxito en ERPNext!");
       await loadPOSProfileAndShift();
     } catch (err: any) {
@@ -622,7 +647,10 @@ export default function POSPage() {
         total: cartTotal,
         amountPaid: paymentMode === "Cash" ? amountPaid : cartTotal,
         changeDue: paymentMode === "Cash" ? changeDue : 0,
-        paymentMode: paymentMode
+        paymentMode: paymentMode,
+        payInUsd: paymentMode === "Cash" ? payInUsd : false,
+        usdAmountPaid: paymentMode === "Cash" && payInUsd ? usdAmountPaid : undefined,
+        usdExchangeRate: paymentMode === "Cash" && payInUsd ? (usdExchangeRate || parseFloat(tempUsdRate) || 0) : undefined
       });
       
       setSuccessMessage(`¡Venta procesada con éxito! Factura creada y stock actualizado.`);
@@ -1099,6 +1127,9 @@ export default function POSPage() {
               disabled={!cart || cart.length === 0}
               onClick={() => {
                 setAmountPaid(cartTotal);
+                setPayInUsd(false);
+                setUsdAmountPaid(0);
+                setTempUsdRate("");
                 setShowCheckout(true);
               }}
               className="w-full rounded-xl py-3.5 text-sm font-bold text-white shadow-xl transition-all duration-300 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
@@ -1190,6 +1221,21 @@ export default function POSPage() {
                     </div>
                   );
                 })}
+              </div>
+
+              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-850 space-y-1">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Tipo de Cambio USD (Precio de Compra del Turno)
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  value={inputUsdRate}
+                  onChange={(e) => setInputUsdRate(e.target.value)}
+                  placeholder="Ej. 17.50"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700"
+                  required
+                />
               </div>
 
               {errorMessage && (
@@ -1468,55 +1514,179 @@ export default function POSPage() {
 
                 {paymentMode === "Cash" && (
                   <>
+                    {/* Opción de Pago en USD */}
+                    <div className="flex items-center gap-2 mb-3 bg-slate-950 p-3 rounded-xl border border-slate-850">
+                      <input
+                        type="checkbox"
+                        id="payInUsd"
+                        checked={payInUsd}
+                        onChange={(e) => {
+                          setPayInUsd(e.target.checked);
+                          setAmountPaid(0);
+                          setUsdAmountPaid(0);
+                        }}
+                        className="h-4 w-4 rounded border-slate-800 bg-slate-900 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900 cursor-pointer"
+                      />
+                      <label htmlFor="payInUsd" className="text-xs font-bold text-slate-300 cursor-pointer">
+                        Pagar en Dólares (USD)
+                      </label>
+                    </div>
+
+                    {payInUsd && (
+                      <div className="space-y-2 mb-3 bg-slate-950 p-3 rounded-xl border border-slate-850">
+                        {usdExchangeRate === 0 ? (
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                              Definir Tipo de Cambio USD ($)
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              value={tempUsdRate}
+                              onChange={(e) => {
+                                setTempUsdRate(e.target.value);
+                                setUsdAmountPaid(0);
+                                setAmountPaid(0);
+                              }}
+                              placeholder="Ej. 17.50"
+                              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700"
+                              required={payInUsd && usdExchangeRate === 0}
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex justify-between text-xs text-slate-400 font-semibold">
+                            <span>Tipo de cambio:</span>
+                            <span className="text-white">${usdExchangeRate.toFixed(2)} MXN</span>
+                          </div>
+                        )}
+                        
+                        {(usdExchangeRate > 0 || parseFloat(tempUsdRate) > 0) && (
+                          <div className="flex justify-between text-xs text-slate-400 font-semibold border-t border-slate-900 pt-2">
+                            <span>Total a pagar en USD:</span>
+                            <span className="text-sky-400 font-extrabold">
+                              ${(cartTotal / (usdExchangeRate || parseFloat(tempUsdRate))).toFixed(2)} USD
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Input de Pago */}
                     <div className="pt-2 border-t border-slate-900">
                       <div className="flex justify-between items-center mb-1.5">
                         <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                          Efectivo Recibido
+                          {payInUsd ? "Dólares Recibidos (USD)" : "Efectivo Recibido"}
                         </label>
-                        <span className="text-[10px] text-slate-400">Total: ${cartTotal.toFixed(2)}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {payInUsd 
+                            ? `Total: $${(cartTotal / (usdExchangeRate || parseFloat(tempUsdRate) || 1)).toFixed(2)} USD` 
+                            : `Total: $${cartTotal.toFixed(2)}`}
+                        </span>
                       </div>
-                      <input
-                        type="number"
-                        step="any"
-                        value={amountPaid || ""}
-                        onChange={(e) => setAmountPaid(parseFloat(e.target.value) || 0)}
-                        placeholder="0.00"
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-base font-extrabold text-white outline-none focus:border-slate-700"
-                      />
+                      {payInUsd ? (
+                        <input
+                          type="number"
+                          step="any"
+                          value={usdAmountPaid || ""}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            const rate = usdExchangeRate || parseFloat(tempUsdRate) || 0;
+                            setUsdAmountPaid(val);
+                            setAmountPaid(val * rate);
+                          }}
+                          placeholder="0.00"
+                          className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-base font-extrabold text-white outline-none focus:border-slate-700"
+                        />
+                      ) : (
+                        <input
+                          type="number"
+                          step="any"
+                          value={amountPaid || ""}
+                          onChange={(e) => setAmountPaid(parseFloat(e.target.value) || 0)}
+                          placeholder="0.00"
+                          className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-base font-extrabold text-white outline-none focus:border-slate-700"
+                        />
+                      )}
                     </div>
 
                     {/* Botones de Efectivo Rápido */}
                     <div className="flex flex-wrap gap-1.5 mt-1 border-t border-slate-950 pt-2">
                       <button
                         type="button"
-                        onClick={() => setAmountPaid(cartTotal)}
+                        onClick={() => {
+                          if (payInUsd) {
+                            const rate = usdExchangeRate || parseFloat(tempUsdRate) || 1;
+                            const exactUsd = cartTotal / rate;
+                            setUsdAmountPaid(exactUsd);
+                            setAmountPaid(cartTotal);
+                          } else {
+                            setAmountPaid(cartTotal);
+                          }
+                        }}
                         className="rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-slate-700 text-[10px] font-bold text-slate-300 px-2.5 py-1.5 transition-all cursor-pointer"
                       >
                         Exacto
                       </button>
-                      {[20, 50, 100, 200, 500].map((bill) => {
-                        if (bill >= cartTotal) {
-                          return (
-                            <button
-                              key={bill}
-                              type="button"
-                              onClick={() => setAmountPaid(bill)}
-                              className="rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-slate-700 text-[10px] font-bold text-slate-300 px-2.5 py-1.5 transition-all cursor-pointer"
-                            >
-                              ${bill}
-                            </button>
-                          );
-                        }
-                        return null;
-                      })}
+                      {payInUsd ? (
+                        [1, 5, 10, 20, 50, 100].map((bill) => {
+                          const rate = usdExchangeRate || parseFloat(tempUsdRate) || 1;
+                          const totalInUsd = cartTotal / rate;
+                          if (bill >= totalInUsd) {
+                            return (
+                              <button
+                                key={bill}
+                                type="button"
+                                onClick={() => {
+                                  setUsdAmountPaid(bill);
+                                  setAmountPaid(bill * rate);
+                                }}
+                                className="rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-slate-700 text-[10px] font-bold text-slate-300 px-2.5 py-1.5 transition-all cursor-pointer"
+                              >
+                                ${bill} USD
+                              </button>
+                            );
+                          }
+                          return null;
+                        })
+                      ) : (
+                        [20, 50, 100, 200, 500].map((bill) => {
+                          if (bill >= cartTotal) {
+                            return (
+                              <button
+                                key={bill}
+                                type="button"
+                                onClick={() => setAmountPaid(bill)}
+                                className="rounded-lg bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-slate-700 text-[10px] font-bold text-slate-300 px-2.5 py-1.5 transition-all cursor-pointer"
+                              >
+                                ${bill}
+                              </button>
+                            );
+                          }
+                          return null;
+                        })
+                      )}
                     </div>
+
+                    {payInUsd && usdAmountPaid > 0 && (
+                      <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-900">
+                        <span>Equivalente en Pesos:</span>
+                        <span className="font-bold text-slate-300">${(usdAmountPaid * (usdExchangeRate || parseFloat(tempUsdRate) || 0)).toFixed(2)} MXN</span>
+                      </div>
+                    )}
 
                     {/* Calculadora de Vuelto */}
                     <div className="flex justify-between text-sm text-slate-400 pt-2 border-t border-slate-900">
-                      <span>Vuelto a entregar</span>
+                      <span>Vuelto a entregar {payInUsd ? "(en Pesos MXN)" : ""}</span>
                       <span className="font-black text-emerald-400 text-lg">${changeDue.toFixed(2)}</span>
                     </div>
+                    {payInUsd && changeDue > 0 && (
+                      <div className="flex justify-between text-xs text-slate-500 pt-1">
+                        <span>Equivalente del vuelto en USD:</span>
+                        <span className="font-bold text-slate-400">
+                          ${(changeDue / (usdExchangeRate || parseFloat(tempUsdRate) || 1)).toFixed(2)} USD
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -1630,10 +1800,27 @@ export default function POSPage() {
                   <span>TOTAL A PAGAR:</span>
                   <span>${printedTicket.total.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Pago con ({printedTicket.paymentMode === "Cash" ? "Efectivo" : "Tarjeta"}):</span>
-                  <span>${printedTicket.amountPaid.toFixed(2)}</span>
-                </div>
+                {printedTicket.payInUsd ? (
+                  <>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Recibido (USD):</span>
+                      <span>${printedTicket.usdAmountPaid?.toFixed(2)} USD</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Tipo de Cambio:</span>
+                      <span>${printedTicket.usdExchangeRate?.toFixed(2)} MXN</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Equivalente Recibido:</span>
+                      <span>${printedTicket.amountPaid.toFixed(2)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-slate-600">
+                    <span>Pago con ({printedTicket.paymentMode === "Cash" ? "Efectivo" : "Tarjeta"}):</span>
+                    <span>${printedTicket.amountPaid.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-emerald-800 font-bold">
                   <span>Cambio Entregado:</span>
                   <span>${printedTicket.changeDue.toFixed(2)}</span>
@@ -1782,10 +1969,27 @@ export default function POSPage() {
               <span>TOTAL A PAGAR:</span>
               <span>${printedTicket.total.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-slate-700 text-[8px]">
-              <span>Pago con ({printedTicket.paymentMode === "Cash" ? "Efectivo" : "Tarjeta"}):</span>
-              <span>${printedTicket.amountPaid.toFixed(2)}</span>
-            </div>
+            {printedTicket.payInUsd ? (
+              <>
+                <div className="flex justify-between text-slate-700 text-[8px]">
+                  <span>Recibido (USD):</span>
+                  <span>${printedTicket.usdAmountPaid?.toFixed(2)} USD</span>
+                </div>
+                <div className="flex justify-between text-slate-700 text-[8px]">
+                  <span>Tipo de Cambio:</span>
+                  <span>${printedTicket.usdExchangeRate?.toFixed(2)} MXN</span>
+                </div>
+                <div className="flex justify-between text-slate-700 text-[8px]">
+                  <span>Equivalente Recibido:</span>
+                  <span>${printedTicket.amountPaid.toFixed(2)}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between text-slate-700 text-[8px]">
+                <span>Pago con ({printedTicket.paymentMode === "Cash" ? "Efectivo" : "Tarjeta"}):</span>
+                <span>${printedTicket.amountPaid.toFixed(2)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-slate-900 font-bold text-[8px]">
               <span>Cambio Entregado:</span>
               <span>${printedTicket.changeDue.toFixed(2)}</span>
