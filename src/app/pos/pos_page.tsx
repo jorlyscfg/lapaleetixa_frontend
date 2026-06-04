@@ -637,6 +637,9 @@ export default function POSPage() {
       pos_profile: posProfile?.pos_profile,
       selling_price_list: wholesaleApplied ? "Standard Wholesale" : (posProfile?.selling_price_list || "Standard Selling"),
       due_date: new Date().toISOString().split('T')[0],
+      remarks: paymentMode === "Cash" && payInUsd 
+        ? `[Pago USD] Recibido: $${usdAmountPaid.toFixed(2)} USD (TC: ${(usdExchangeRate || parseFloat(tempUsdRate) || 0).toFixed(2)} MXN) | Cambio: $${changeDue.toFixed(2)} MXN`
+        : undefined,
       items: cart.map(item => ({
         item_code: item.item_code,
         qty: item.qty,
