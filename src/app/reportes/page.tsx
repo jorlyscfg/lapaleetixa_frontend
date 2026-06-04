@@ -37,7 +37,8 @@ export default function ReportsPage() {
     return new Date().toISOString().split("T")[0];
   });
 
-  const [activeSubTab, setActiveSubTab] = useState<"ventas" | "stock">("ventas");
+  const [activeSubTab, setActiveSubTab] = useState<"ventas" | "stock" | "auditoria">("ventas");
+  const [auditSubTab, setAuditSubTab] = useState<"inventario" | "ventas" | "cambios">("inventario");
   const [saasConfig, setSaasConfig] = useState<any>(null);
   const [configLoading, setConfigLoading] = useState(true);
 
@@ -110,6 +111,14 @@ export default function ReportsPage() {
   );
   const stockReport = (stockReportRaw as any)?.message?.stock_data || [];
 
+  // Obtener Datos de Auditoría (capturando error de forma segura)
+  const { data: auditReportRaw, error: auditReportError, isLoading: auditReportLoading } = useFrappeGetCall(
+    "paletixa_saas.paletixa_saas.api.get_audit_report_data",
+    { start_date: startDate, end_date: endDate },
+    `saas_audit_report_${startDate}_${endDate}`
+  );
+  const auditReport = (auditReportRaw as any)?.message || { stock_moves: [], sales_moves: [], version_logs: [] };
+
   const activeColor = saasConfig?.colors?.primary || "#3498db";
 
   // Función para exportar a CSV de forma nativa
@@ -141,11 +150,12 @@ export default function ReportsPage() {
   };
 
   // Pantalla de error amigable en lugar de reventar en bucle de refresco
-  if (metricsError || salesReportError || stockReportError) {
+  if (metricsError || salesReportError || stockReportError || auditReportError) {
     const errorMsg =
       (metricsError as any)?.message ||
       (salesReportError as any)?.message ||
       (stockReportError as any)?.message ||
+      (auditReportError as any)?.message ||
       "No tenés permisos para acceder a esta sección de reportes o la sesión ha expirado.";
 
     return (
@@ -177,7 +187,7 @@ export default function ReportsPage() {
     );
   }
 
-  if (authLoading || configLoading || metricsLoading || salesReportLoading || stockReportLoading) {
+  if (authLoading || configLoading || metricsLoading || salesReportLoading || stockReportLoading || auditReportLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100 font-sans">
         <div className="flex flex-col items-center gap-4">
@@ -322,6 +332,12 @@ export default function ReportsPage() {
             className={`tab-button ${activeSubTab === "stock" ? "active" : ""}`}
           >
             📦 Inventario General
+          </button>
+          <button
+            onClick={() => setActiveSubTab("auditoria")}
+            className={`tab-button ${activeSubTab === "auditoria" ? "active" : ""}`}
+          >
+            📋 Registro de Auditoría
           </button>
         </div>
 
@@ -593,6 +609,245 @@ export default function ReportsPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* VISTA C: REGISTRO DE AUDITORIA */}
+        {activeSubTab === "auditoria" && (
+          <div className="space-y-6">
+            
+            {/* Cabecera y Selector interno de Auditoría */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              {/* Sub-pestañas internas de Auditoría con estética premium */}
+              <div className="flex flex-wrap gap-2 p-1.5 bg-slate-950/60 rounded-2xl border border-slate-850/60 w-fit">
+                <button
+                  onClick={() => setAuditSubTab("inventario")}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                    auditSubTab === "inventario"
+                      ? "bg-slate-900 text-white border border-slate-800 shadow"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  📦 Movimientos de Stock
+                </button>
+                <button
+                  onClick={() => setAuditSubTab("ventas")}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                    auditSubTab === "ventas"
+                      ? "bg-slate-900 text-white border border-slate-800 shadow"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  💰 Historial de Ventas
+                </button>
+                <button
+                  onClick={() => setAuditSubTab("cambios")}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                    auditSubTab === "cambios"
+                      ? "bg-slate-900 text-white border border-slate-800 shadow"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  ⚙️ Modificaciones de Config
+                </button>
+              </div>
+            </div>
+
+            {/* SECCION 1: MOVIMIENTOS DE STOCK */}
+            {auditSubTab === "inventario" && (
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+                <div className="text-left">
+                  <h3 className="text-lg font-black text-white">Libro de Stock en Tiempo Real</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Visualización cronológica de entradas, salidas y transferencias físicas del catálogo en la base de datos.
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-sm text-left border-collapse text-slate-350">
+                    <thead className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-900 border-b border-slate-800">
+                      <tr>
+                        <th className="px-6 py-4">Fecha/Hora</th>
+                        <th className="px-6 py-4">Usuario</th>
+                        <th className="px-6 py-4">Producto</th>
+                        <th className="px-6 py-4">Sucursal</th>
+                        <th className="px-6 py-4 text-right">Movimiento</th>
+                        <th className="px-6 py-4">Documento Origen</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850/60">
+                      {auditReport.stock_moves && auditReport.stock_moves.length > 0 ? (
+                        auditReport.stock_moves.map((row: any) => (
+                          <tr key={row.name} className="hover:bg-slate-900/35 transition-colors">
+                            <td className="px-6 py-4 text-xs font-semibold">{row.timestamp.split(".")[0]}</td>
+                            <td className="px-6 py-4 text-xs font-bold text-slate-200">{row.user}</td>
+                            <td className="px-6 py-4 text-xs">
+                              <span className="font-bold text-white block">{row.item_code}</span>
+                              <span className="text-[10px] text-slate-400">{row.item_name}</span>
+                            </td>
+                            <td className="px-6 py-4 text-xs">
+                              <span className="px-2.5 py-1 rounded bg-slate-900 text-slate-300 font-bold border border-slate-800">
+                                {row.branch}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right text-xs font-black">
+                              <span className={row.actual_qty < 0 ? "text-red-400" : "text-emerald-400"}>
+                                {row.actual_qty > 0 ? "+" : ""}{row.actual_qty} pzs
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-xs font-semibold text-slate-400">
+                              <span className="block font-bold text-slate-300">{row.voucher_no}</span>
+                              <span className="text-[9px] uppercase tracking-wide text-slate-500">{row.voucher_type}</span>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center text-slate-500 font-semibold">
+                            No se registran movimientos de stock en este período.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* SECCION 2: HISTORIAL DE VENTAS */}
+            {auditSubTab === "ventas" && (
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+                <div className="text-left">
+                  <h3 className="text-lg font-black text-white">Bitácora de Transacciones de Venta</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Auditoría cronológica de creación, confirmación y cancelación de facturas del periodo.
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-sm text-left border-collapse text-slate-350">
+                    <thead className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-900 border-b border-slate-800">
+                      <tr>
+                        <th className="px-6 py-4">Fecha/Hora</th>
+                        <th className="px-6 py-4">Usuario</th>
+                        <th className="px-6 py-4">Factura ID</th>
+                        <th className="px-6 py-4">Cliente</th>
+                        <th className="px-6 py-4 text-right">Total</th>
+                        <th className="px-6 py-4 text-center">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850/60">
+                      {auditReport.sales_moves && auditReport.sales_moves.length > 0 ? (
+                        auditReport.sales_moves.map((row: any) => (
+                          <tr key={row.name} className="hover:bg-slate-900/35 transition-colors">
+                            <td className="px-6 py-4 text-xs font-semibold">{row.timestamp.split(".")[0]}</td>
+                            <td className="px-6 py-4 text-xs font-bold text-slate-200">{row.user}</td>
+                            <td className="px-6 py-4 text-xs font-bold text-white">{row.name}</td>
+                            <td className="px-6 py-4 text-xs font-semibold">{row.customer_name || "Público General"}</td>
+                            <td className="px-6 py-4 text-right text-xs font-black text-white">${row.amount.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-center text-xs">
+                              {row.docstatus === 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-slate-850 font-bold text-[10px]">
+                                  Borrador
+                                </span>
+                              )}
+                              {row.docstatus === 1 && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold text-[10px]">
+                                  Completado
+                                </span>
+                              )}
+                              {row.docstatus === 2 && (
+                                <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-bold text-[10px]">
+                                  Cancelado
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center text-slate-500 font-semibold">
+                            No se registran transacciones de venta en este período.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* SECCION 3: HISTORIAL DE MODIFICACIONES DE CONFIGURACION */}
+            {auditSubTab === "cambios" && (
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+                <div className="text-left">
+                  <h3 className="text-lg font-black text-white">Historial de Modificaciones de Sistema</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Cambios detallados a nivel de campo en catálogos, almacenes y listas de precios (registro nativo Version).
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-sm text-left border-collapse text-slate-350">
+                    <thead className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-900 border-b border-slate-800">
+                      <tr>
+                        <th className="px-6 py-4">Fecha/Hora</th>
+                        <th className="px-6 py-4">Usuario</th>
+                        <th className="px-6 py-4">Módulo/DocType</th>
+                        <th className="px-6 py-4">Documento ID</th>
+                        <th className="px-6 py-4">Cambios Detectados</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850/60">
+                      {auditReport.version_logs && auditReport.version_logs.length > 0 ? (
+                        auditReport.version_logs.map((row: any) => {
+                          // Formatear cambios nativos
+                          const formatChanges = (dataDiff: any) => {
+                            if (!dataDiff) return "Inserción o cambio estructural";
+                            const changes: string[] = [];
+                            if (dataDiff.changed && dataDiff.changed.length > 0) {
+                              dataDiff.changed.forEach((c: any) => {
+                                changes.push(`Cambió ${c[0]} de "${c[1] !== null ? c[1] : ''}" a "${c[2] !== null ? c[2] : ''}"`);
+                              });
+                            }
+                            if (dataDiff.added && dataDiff.added.length > 0) {
+                              changes.push(`Filas agregadas en tablas hijas`);
+                            }
+                            if (dataDiff.removed && dataDiff.removed.length > 0) {
+                              changes.push(`Filas eliminadas en tablas hijas`);
+                            }
+                            return changes.length > 0 ? changes.join(" | ") : "Modificación guardada";
+                          };
+
+                          return (
+                            <tr key={row.name} className="hover:bg-slate-900/35 transition-colors">
+                              <td className="px-6 py-4 text-xs font-semibold">{row.timestamp.split(".")[0]}</td>
+                              <td className="px-6 py-4 text-xs font-bold text-slate-200">{row.user}</td>
+                              <td className="px-6 py-4 text-xs font-bold text-white">
+                                <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-850">
+                                  {row.voucher_type}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-xs font-bold text-slate-300">{row.voucher_no}</td>
+                              <td className="px-6 py-4 text-xs text-slate-300 font-semibold max-w-xs truncate" title={formatChanges(row.data_diff)}>
+                                {formatChanges(row.data_diff)}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-8 text-center text-slate-500 font-semibold">
+                            No se registran cambios estructurales o de precios en este período.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
           </div>
         )}
       </main>
