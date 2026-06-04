@@ -114,6 +114,14 @@ interface AuditReportData {
   version_logs: AuditVersionLog[];
 }
 
+interface ShiftInvoiceItem {
+  item_code: string;
+  item_name: string;
+  qty: number;
+  rate: number;
+  amount: number;
+}
+
 interface ShiftInvoice {
   name: string;
   creation: string;
@@ -123,6 +131,7 @@ interface ShiftInvoice {
   remarks: string;
   usd_amount?: number;
   exchange_rate?: number;
+  items?: ShiftInvoiceItem[];
 }
 
 interface ShiftClosingDetail {
@@ -180,6 +189,7 @@ export default function ReportsPage() {
   const [auditSubTab, setAuditSubTab] = useState<"inventario" | "ventas" | "cambios">("inventario");
   const [saasConfig, setSaasConfig] = useState<SaasConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
+  const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
 
   // Cargar configuraciones de marca blanca
   useEffect(() => {
@@ -1056,7 +1066,10 @@ export default function ReportsPage() {
                           return (
                             <tr 
                               key={shift.opening_entry} 
-                              onClick={() => setSelectedShift(shift)}
+                              onClick={() => {
+                                setSelectedShift(shift);
+                                setExpandedInvoice(null);
+                              }}
                               className={`cursor-pointer transition-colors ${
                                 isSelected 
                                   ? "bg-indigo-500/10 hover:bg-indigo-500/15 border-l-4 border-indigo-500" 
@@ -1243,25 +1256,64 @@ export default function ReportsPage() {
                         {selectedShift?.invoices && selectedShift.invoices.length > 0 ? (
                           selectedShift.invoices.map((inv: ShiftInvoice) => {
                             const isUsdInvoice = inv.remarks && inv.remarks.includes("[Pago USD]");
+                            const isExpanded = expandedInvoice === inv.name;
                             return (
-                              <div key={inv.name} className="p-3 hover:bg-slate-900/35 transition-colors flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                  <span className="text-xs font-bold text-white block">{inv.name}</span>
-                                  <span className="text-[9px] text-slate-500 block font-medium">{inv.creation.split(" ")[1]?.split(".")[0] || ""} - {inv.customer_name || "General"}</span>
-                                  {isUsdInvoice && (
-                                    <span className="inline-block mt-1 text-[8px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">
-                                      Pago USD
+                              <div 
+                                key={inv.name} 
+                                onClick={() => setExpandedInvoice(isExpanded ? null : inv.name)}
+                                className="p-3 hover:bg-slate-900/35 transition-colors cursor-pointer select-none space-y-2"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-xs font-bold text-white block">{inv.name}</span>
+                                      <svg 
+                                        className={`h-3 w-3 text-slate-500 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} 
+                                        fill="none" 
+                                        viewBox="0 0 24 24" 
+                                        stroke="currentColor" 
+                                        strokeWidth={3}
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </div>
+                                    <span className="text-[9px] text-slate-500 block font-medium">{inv.creation.split(" ")[1]?.split(".")[0] || ""} - {inv.customer_name || "General"}</span>
+                                    {isUsdInvoice && (
+                                      <span className="inline-block mt-1 text-[8px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">
+                                        Pago USD
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-right space-y-0.5">
+                                    <span className="text-xs font-black text-white block">${inv.grand_total.toFixed(2)}</span>
+                                    <span className={`text-[8px] font-black uppercase tracking-wider ${
+                                      inv.docstatus === 0 ? "text-slate-500" : "text-emerald-400"
+                                    }`}>
+                                      {inv.docstatus === 0 ? "Borrador" : "Completado"}
                                     </span>
-                                  )}
+                                  </div>
                                 </div>
-                                <div className="text-right space-y-0.5">
-                                  <span className="text-xs font-black text-white block">${inv.grand_total.toFixed(2)}</span>
-                                  <span className={`text-[8px] font-black uppercase tracking-wider ${
-                                    inv.docstatus === 0 ? "text-slate-500" : "text-emerald-400"
-                                  }`}>
-                                    {inv.docstatus === 0 ? "Borrador" : "Completado"}
-                                  </span>
-                                </div>
+
+                                {/* LISTA DE PRODUCTOS VENDIDOS */}
+                                {isExpanded && (
+                                  <div className="pt-2 border-t border-slate-900/60 space-y-1.5 animate-fade-in">
+                                    {inv.items && inv.items.length > 0 ? (
+                                      inv.items.map((item, idx) => (
+                                        <div key={idx} className="flex justify-between items-center text-[10px] font-bold text-slate-400">
+                                          <div className="max-w-[70%] truncate">
+                                            <span className="text-indigo-400 font-extrabold">{item.qty}x</span>{" "}
+                                            <span className="text-slate-300">{item.item_name}</span>
+                                          </div>
+                                          <div className="text-right text-white">
+                                            ${item.amount.toFixed(2)}
+                                          </div>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div className="text-slate-600 text-[10px] text-center italic py-1">Sin detalles de productos.</div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })
