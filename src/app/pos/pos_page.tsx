@@ -478,8 +478,25 @@ export default function POSPage() {
     setSelectedCustomer(posProfile?.customer || "Público General");
   };
 
+  const getItemCategory = (itemName: string, itemCode: string) => {
+    const name = (itemName || itemCode || "").toLowerCase();
+    if (name.startsWith("bolis") || name.includes("saborines")) return "Bolis";
+    if (name.startsWith("paleta")) return "Paletas";
+    if (name.startsWith("trompito")) return "Trompitos";
+    if (name.includes("eskimo")) return "Eskimales";
+    if (name.startsWith("nieve")) return "Nieves";
+    return "Otros";
+  };
+
+  const getCategoryQty = (category: string) => {
+    return cart?.reduce((sum, item) => {
+      const itemCat = getItemCategory(item.item_name, item.item_code);
+      return itemCat === category ? sum + item.qty : sum;
+    }, 0) || 0;
+  };
+
   // Obtener precio activo en tiempo real
-  const getActiveItemPrice = (itemCode: string, standardRate: number, itemQty: number = 0) => {
+  const getActiveItemPrice = (itemCode: string, standardRate: number, itemQty: number = 0, itemName: string = "") => {
     const retail = getItemPrice(itemCode, standardRate);
     
     if (wholesaleOverride === true) {
@@ -490,7 +507,10 @@ export default function POSPage() {
       return retail;
     }
 
-    if (itemQty >= 10) {
+    const itemCat = getItemCategory(itemName, itemCode);
+    const categoryQty = getCategoryQty(itemCat);
+
+    if (categoryQty >= 10) {
       const wholesale = getItemWholesalePrice(itemCode);
       return wholesale && wholesale > 0 ? wholesale : retail;
     }
@@ -498,11 +518,14 @@ export default function POSPage() {
     return retail;
   };
 
-  const hasItemWholesale = cart?.some(item => item.qty >= 10) || false;
+  const hasItemWholesale = cart?.some(item => {
+    const cat = getItemCategory(item.item_name, item.item_code);
+    return getCategoryQty(cat) >= 10;
+  }) || false;
   const wholesaleApplied = wholesaleOverride !== null ? wholesaleOverride : hasItemWholesale;
 
   // Totales
-  const cartSubtotal = cart?.reduce((sum, item) => sum + (item.qty * getActiveItemPrice(item.item_code, item.rate, item.qty)), 0) || 0;
+  const cartSubtotal = cart?.reduce((sum, item) => sum + (item.qty * getActiveItemPrice(item.item_code, item.rate, item.qty, item.item_name)), 0) || 0;
   const cartTotal = cartSubtotal;
   const changeDue = amountPaid >= cartTotal ? amountPaid - cartTotal : 0;
 
@@ -617,7 +640,7 @@ export default function POSPage() {
       items: cart.map(item => ({
         item_code: item.item_code,
         qty: item.qty,
-        rate: getActiveItemPrice(item.item_code, item.rate, item.qty),
+        rate: getActiveItemPrice(item.item_code, item.rate, item.qty, item.item_name),
         uom: "Unit",
         warehouse: activeWarehouse
       })),
@@ -641,7 +664,7 @@ export default function POSPage() {
           item_code: item.item_code,
           item_name: item.item_name,
           qty: item.qty,
-          rate: getActiveItemPrice(item.item_code, item.rate, item.qty)
+          rate: getActiveItemPrice(item.item_code, item.rate, item.qty, item.item_name)
         })),
         subtotal: cartSubtotal,
         total: cartTotal,
@@ -1067,8 +1090,10 @@ export default function POSPage() {
             ) : (
               cart.map((item) => {
                 const retailPrice = getItemPrice(item.item_code, item.rate);
-                const activePrice = getActiveItemPrice(item.item_code, item.rate, item.qty);
-                const isWholesaleActive = (wholesaleOverride === true || (wholesaleOverride === null && item.qty >= 10)) && getItemWholesalePrice(item.item_code) !== null;
+                const activePrice = getActiveItemPrice(item.item_code, item.rate, item.qty, item.item_name);
+                const itemCat = getItemCategory(item.item_name, item.item_code);
+                const categoryQty = getCategoryQty(itemCat);
+                const isWholesaleActive = (wholesaleOverride === true || (wholesaleOverride === null && categoryQty >= 10)) && getItemWholesalePrice(item.item_code) !== null;
                 
                 return (
                   <div key={item.item_code} className="flex items-center justify-between gap-3 bg-slate-900/40 p-3 rounded-xl border border-slate-850">
