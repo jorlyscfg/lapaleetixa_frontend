@@ -23,6 +23,144 @@ interface MetricState {
   }>;
 }
 
+interface SaasConfig {
+  client_name?: string;
+  colors?: {
+    primary?: string;
+  };
+}
+
+interface DetailedSale {
+  name: string;
+  date: string;
+  customer: string;
+  customer_name: string;
+  total: number;
+  payment_mode?: string;
+  is_pos: number | boolean;
+}
+
+interface SalesByBranch {
+  warehouse: string;
+  branch: string;
+  total: number;
+}
+
+interface TopProduct {
+  item_code: string;
+  item_name: string;
+  total_qty: number;
+  total_amount: number;
+}
+
+interface SalesTrendPoint {
+  date: string;
+  total: number;
+}
+
+interface SalesReportData {
+  detailed_sales: DetailedSale[];
+  sales_by_branch: SalesByBranch[];
+  top_products: TopProduct[];
+  sales_trend: SalesTrendPoint[];
+}
+
+interface StockItem {
+  item_code: string;
+  item_name: string;
+  branch: string;
+  actual_qty: number;
+}
+
+interface AuditStockMove {
+  name: string;
+  timestamp: string;
+  user: string;
+  item_code: string;
+  item_name: string;
+  branch: string;
+  actual_qty: number;
+  voucher_no: string;
+  voucher_type: string;
+}
+
+interface AuditSalesMove {
+  name: string;
+  timestamp: string;
+  user: string;
+  customer_name?: string;
+  amount: number;
+  docstatus: number;
+}
+
+interface AuditVersionDiff {
+  changed?: Array<[string, string | number | null, string | number | null]>;
+  added?: Array<unknown>;
+  removed?: Array<unknown>;
+}
+
+interface AuditVersionLog {
+  name: string;
+  timestamp: string;
+  user: string;
+  voucher_type: string;
+  voucher_no: string;
+  data_diff?: AuditVersionDiff;
+}
+
+interface AuditReportData {
+  stock_moves: AuditStockMove[];
+  sales_moves: AuditSalesMove[];
+  version_logs: AuditVersionLog[];
+}
+
+interface ShiftInvoice {
+  name: string;
+  creation: string;
+  customer_name: string;
+  grand_total: number;
+  docstatus: number;
+  remarks: string;
+  usd_amount?: number;
+  exchange_rate?: number;
+}
+
+interface ShiftClosingDetail {
+  mode_of_payment: string;
+  opening_amount: number;
+  expected_amount: number;
+  closing_amount: number;
+  difference: number;
+}
+
+interface ShiftData {
+  opening_entry: string;
+  closing_entry: string | null;
+  pos_profile: string;
+  user: string;
+  period_start_date: string;
+  period_end_date: string;
+  status: "Open" | "Closed";
+  grand_total: number;
+  sales_count: number;
+  sales_total: number;
+  usd_sales_count: number;
+  usd_amount_collected: number;
+  usd_invoices: Array<{
+    name: string;
+    grand_total: number;
+    remarks: string;
+    usd_amount: number;
+    exchange_rate: number;
+  }>;
+  closing_details: ShiftClosingDetail[];
+  invoices: ShiftInvoice[];
+}
+
+interface FrappeError {
+  message?: string;
+}
+
 export default function ReportsPage() {
   const { currentUser, isLoading: authLoading } = useFrappeAuth();
   const router = useRouter();
@@ -37,9 +175,10 @@ export default function ReportsPage() {
     return new Date().toISOString().split("T")[0];
   });
 
-  const [activeSubTab, setActiveSubTab] = useState<"ventas" | "stock" | "auditoria">("ventas");
+  const [activeSubTab, setActiveSubTab] = useState<"ventas" | "stock" | "auditoria" | "turnos">("ventas");
+  const [selectedShift, setSelectedShift] = useState<ShiftData | null>(null);
   const [auditSubTab, setAuditSubTab] = useState<"inventario" | "ventas" | "cambios">("inventario");
-  const [saasConfig, setSaasConfig] = useState<any>(null);
+  const [saasConfig, setSaasConfig] = useState<SaasConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
 
   // Cargar configuraciones de marca blanca
@@ -93,7 +232,7 @@ export default function ReportsPage() {
     {},
     "saas_admin_metrics"
   );
-  const metrics: MetricState | null = (metricsRaw as any)?.message?.metrics || null;
+  const metrics: MetricState | null = (metricsRaw as { message?: { metrics?: MetricState } })?.message?.metrics || null;
 
   // Obtener Datos de Reportes de Ventas (capturando error de forma segura)
   const { data: salesReportRaw, error: salesReportError, isLoading: salesReportLoading } = useFrappeGetCall(
@@ -101,7 +240,7 @@ export default function ReportsPage() {
     { start_date: startDate, end_date: endDate },
     `saas_sales_report_${startDate}_${endDate}`
   );
-  const salesReport = (salesReportRaw as any)?.message || null;
+  const salesReport = (salesReportRaw as { message?: SalesReportData })?.message || null;
 
   // Obtener Datos de Stock General (capturando error de forma segura)
   const { data: stockReportRaw, error: stockReportError, isLoading: stockReportLoading } = useFrappeGetCall(
@@ -109,7 +248,7 @@ export default function ReportsPage() {
     {},
     "saas_stock_report"
   );
-  const stockReport = (stockReportRaw as any)?.message?.stock_data || [];
+  const stockReport = (stockReportRaw as { message?: { stock_data?: StockItem[] } })?.message?.stock_data || [];
 
   // Obtener Datos de Auditoría (capturando error de forma segura)
   const { data: auditReportRaw, error: auditReportError, isLoading: auditReportLoading } = useFrappeGetCall(
@@ -117,7 +256,15 @@ export default function ReportsPage() {
     { start_date: startDate, end_date: endDate },
     `saas_audit_report_${startDate}_${endDate}`
   );
-  const auditReport = (auditReportRaw as any)?.message || { stock_moves: [], sales_moves: [], version_logs: [] };
+  const auditReport = (auditReportRaw as { message?: AuditReportData })?.message || { stock_moves: [], sales_moves: [], version_logs: [] };
+
+  // Obtener Datos de Control de Turnos (capturando error de forma segura)
+  const { data: shiftsRaw, error: shiftsError, isLoading: shiftsLoading } = useFrappeGetCall(
+    "paletixa_saas.paletixa_saas.api.get_pos_shifts",
+    { start_date: startDate, end_date: endDate },
+    `saas_shifts_${startDate}_${endDate}`
+  );
+  const shifts = (shiftsRaw as { message?: { shifts?: ShiftData[] } })?.message?.shifts || [];
 
   const activeColor = saasConfig?.colors?.primary || "#3498db";
 
@@ -126,7 +273,7 @@ export default function ReportsPage() {
     if (!salesReport || !salesReport.detailed_sales || salesReport.detailed_sales.length === 0) return;
 
     const headers = ["Factura ID", "Fecha", "Cliente ID", "Cliente Nombre", "Total", "Metodo Pago", "POS"];
-    const rows = salesReport.detailed_sales.map((item: any) => [
+    const rows = salesReport.detailed_sales.map((item: DetailedSale) => [
       item.name,
       item.date,
       item.customer,
@@ -138,7 +285,7 @@ export default function ReportsPage() {
 
     const csvContent =
       "data:text/csv;charset=utf-8,\uFEFF" +
-      [headers.join(","), ...rows.map((e: Array<any>) => e.map(val => `"${val}"`).join(","))].join("\n");
+      [headers.join(","), ...rows.map((e: Array<string | number>) => e.map(val => `"${val}"`).join(","))].join("\n");
 
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -150,12 +297,13 @@ export default function ReportsPage() {
   };
 
   // Pantalla de error amigable en lugar de reventar en bucle de refresco
-  if (metricsError || salesReportError || stockReportError || auditReportError) {
+  if (metricsError || salesReportError || stockReportError || auditReportError || shiftsError) {
     const errorMsg =
-      (metricsError as any)?.message ||
-      (salesReportError as any)?.message ||
-      (stockReportError as any)?.message ||
-      (auditReportError as any)?.message ||
+      (metricsError as FrappeError)?.message ||
+      (salesReportError as FrappeError)?.message ||
+      (stockReportError as FrappeError)?.message ||
+      (auditReportError as FrappeError)?.message ||
+      (shiftsError as FrappeError)?.message ||
       "No tenés permisos para acceder a esta sección de reportes o la sesión ha expirado.";
 
     return (
@@ -187,7 +335,7 @@ export default function ReportsPage() {
     );
   }
 
-  if (authLoading || configLoading || metricsLoading || salesReportLoading || stockReportLoading || auditReportLoading) {
+  if (authLoading || configLoading || metricsLoading || salesReportLoading || stockReportLoading || auditReportLoading || shiftsLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100 font-sans">
         <div className="flex flex-col items-center gap-4">
@@ -322,22 +470,40 @@ export default function ReportsPage() {
         {/* SECTOR DE PESTAÑAS DE VISUALIZACIÓN COHERENTE CON LA APP */}
         <div className="tab-container">
           <button
-            onClick={() => setActiveSubTab("ventas")}
+            onClick={() => {
+              setActiveSubTab("ventas");
+              setSelectedShift(null);
+            }}
             className={`tab-button ${activeSubTab === "ventas" ? "active" : ""}`}
           >
             📊 Análisis de Ventas
           </button>
           <button
-            onClick={() => setActiveSubTab("stock")}
+            onClick={() => {
+              setActiveSubTab("stock");
+              setSelectedShift(null);
+            }}
             className={`tab-button ${activeSubTab === "stock" ? "active" : ""}`}
           >
             📦 Inventario General
           </button>
           <button
-            onClick={() => setActiveSubTab("auditoria")}
+            onClick={() => {
+              setActiveSubTab("auditoria");
+              setSelectedShift(null);
+            }}
             className={`tab-button ${activeSubTab === "auditoria" ? "active" : ""}`}
           >
             📋 Registro de Auditoría
+          </button>
+          <button
+            onClick={() => {
+              setActiveSubTab("turnos");
+              setSelectedShift(null);
+            }}
+            className={`tab-button ${activeSubTab === "turnos" ? "active" : ""}`}
+          >
+            🔑 Control de Turnos / Cajas
           </button>
         </div>
 
@@ -358,7 +524,7 @@ export default function ReportsPage() {
                 </div>
               </div>
 
-              {salesReport?.sales_trend?.length > 0 ? (
+              {(salesReport?.sales_trend?.length || 0) > 0 ? (
                 <div className="relative w-full overflow-hidden">
                   <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto overflow-visible select-none">
                     <defs>
@@ -382,7 +548,8 @@ export default function ReportsPage() {
 
                     {/* Puntos en la serie */}
                     {trendPoints?.map((p, index) => {
-                      const item = salesReport.sales_trend[index];
+                      const item = salesReport?.sales_trend?.[index];
+                      if (!item) return null;
                       return (
                         <g key={index} className="group cursor-pointer">
                           <circle
@@ -404,9 +571,9 @@ export default function ReportsPage() {
 
                   {/* Etiquetas de Eje X */}
                   <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase tracking-widest pt-4">
-                    <span>{salesReport.sales_trend[0]?.date}</span>
-                    <span>{salesReport.sales_trend[Math.floor(salesReport.sales_trend.length / 2)]?.date}</span>
-                    <span>{salesReport.sales_trend[salesReport.sales_trend.length - 1]?.date}</span>
+                    <span>{salesReport?.sales_trend?.[0]?.date}</span>
+                    <span>{salesReport?.sales_trend?.[Math.floor((salesReport?.sales_trend?.length || 0) / 2)]?.date}</span>
+                    <span>{salesReport?.sales_trend?.[(salesReport?.sales_trend?.length || 1) - 1]?.date}</span>
                   </div>
                 </div>
               ) : (
@@ -430,9 +597,9 @@ export default function ReportsPage() {
                 </div>
 
                 <div className="space-y-4">
-                  {salesReport?.sales_by_branch?.length > 0 ? (
-                    salesReport.sales_by_branch.map((branch: any) => {
-                      const maxVal = Math.max(...salesReport.sales_by_branch.map((b: any) => b.total), 1);
+                  {salesReport?.sales_by_branch && salesReport.sales_by_branch.length > 0 ? (
+                    salesReport.sales_by_branch.map((branch: SalesByBranch) => {
+                      const maxVal = Math.max(...(salesReport?.sales_by_branch?.map((b: SalesByBranch) => b.total) || []), 1);
                       const percent = (branch.total / maxVal) * 100;
                       return (
                         <div key={branch.warehouse} className="space-y-1.5 text-left">
@@ -463,8 +630,8 @@ export default function ReportsPage() {
                 </div>
 
                 <div className="divide-y divide-slate-900/60">
-                  {salesReport?.top_products?.length > 0 ? (
-                    salesReport.top_products.map((item: any, idx: number) => (
+                  {salesReport?.top_products && salesReport.top_products.length > 0 ? (
+                    salesReport.top_products.map((item: TopProduct, idx: number) => (
                       <div key={item.item_code} className="py-3 flex items-center justify-between text-left first:pt-0 last:pb-0">
                         <div className="flex items-center gap-3">
                           <span className="text-xs font-black text-slate-400 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800">
@@ -495,7 +662,7 @@ export default function ReportsPage() {
                   <h3 className="text-lg font-black text-white">Registro Detallado de Facturación</h3>
                   <p className="text-xs text-slate-400 mt-1">Últimas 100 transacciones procesadas en el período.</p>
                 </div>
-                {salesReport?.detailed_sales?.length > 0 && (
+                {(salesReport?.detailed_sales?.length || 0) > 0 && (
                   <button
                     onClick={handleExportCSV}
                     style={{ backgroundColor: activeColor }}
@@ -522,8 +689,8 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-850/60">
-                    {salesReport?.detailed_sales?.length > 0 ? (
-                      salesReport.detailed_sales.map((item: any) => (
+                    {salesReport?.detailed_sales && salesReport.detailed_sales.length > 0 ? (
+                      salesReport.detailed_sales.map((item: DetailedSale) => (
                         <tr key={item.name} className="hover:bg-slate-900/35 transition-colors">
                           <td className="px-6 py-4 font-bold text-white text-xs">{item.name}</td>
                           <td className="px-6 py-4 text-xs font-semibold">{item.date}</td>
@@ -580,8 +747,8 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-850/60">
-                  {stockReport?.length > 0 ? (
-                    stockReport.map((row: any, index: number) => (
+                  {stockReport && stockReport.length > 0 ? (
+                    stockReport.map((row: StockItem, index: number) => (
                       <tr key={index} className="hover:bg-slate-900/35 transition-colors">
                         <td className="px-6 py-4 font-bold text-white text-xs">{row.item_code}</td>
                         <td className="px-6 py-4 text-xs font-semibold">{row.item_name}</td>
@@ -677,7 +844,7 @@ export default function ReportsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-850/60">
                       {auditReport.stock_moves && auditReport.stock_moves.length > 0 ? (
-                        auditReport.stock_moves.map((row: any) => (
+                        auditReport.stock_moves.map((row: AuditStockMove) => (
                           <tr key={row.name} className="hover:bg-slate-900/35 transition-colors">
                             <td className="px-6 py-4 text-xs font-semibold">{row.timestamp.split(".")[0]}</td>
                             <td className="px-6 py-4 text-xs font-bold text-slate-200">{row.user}</td>
@@ -738,7 +905,7 @@ export default function ReportsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-850/60">
                       {auditReport.sales_moves && auditReport.sales_moves.length > 0 ? (
-                        auditReport.sales_moves.map((row: any) => (
+                        auditReport.sales_moves.map((row: AuditSalesMove) => (
                           <tr key={row.name} className="hover:bg-slate-900/35 transition-colors">
                             <td className="px-6 py-4 text-xs font-semibold">{row.timestamp.split(".")[0]}</td>
                             <td className="px-6 py-4 text-xs font-bold text-slate-200">{row.user}</td>
@@ -800,13 +967,13 @@ export default function ReportsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-850/60">
                       {auditReport.version_logs && auditReport.version_logs.length > 0 ? (
-                        auditReport.version_logs.map((row: any) => {
+                        auditReport.version_logs.map((row: AuditVersionLog) => {
                           // Formatear cambios nativos
-                          const formatChanges = (dataDiff: any) => {
+                          const formatChanges = (dataDiff: AuditVersionDiff | undefined) => {
                             if (!dataDiff) return "Inserción o cambio estructural";
                             const changes: string[] = [];
                             if (dataDiff.changed && dataDiff.changed.length > 0) {
-                              dataDiff.changed.forEach((c: any) => {
+                              dataDiff.changed.forEach((c) => {
                                 changes.push(`Cambió ${c[0]} de "${c[1] !== null ? c[1] : ''}" a "${c[2] !== null ? c[2] : ''}"`);
                               });
                             }
@@ -850,6 +1017,275 @@ export default function ReportsPage() {
 
           </div>
         )}
+
+        {/* VISTA D: CONTROL DE TURNOS */}
+        {activeSubTab === "turnos" && (
+          <div className="space-y-6">
+            <div className="grid gap-6 lg:grid-cols-3">
+              
+              {/* LISTADO DE TURNOS (Columna Izquierda 2/3 de ancho) */}
+              <div className="lg:col-span-2 rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+                <div className="text-left">
+                  <h3 className="text-lg font-black text-white">Historial de Turnos de Caja</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Turnos abiertos y cerrados de punto de venta. Los montos de diferencia reflejan descuadres de arqueo.
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-sm text-left border-collapse text-slate-350">
+                    <thead className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-900 border-b border-slate-800">
+                      <tr>
+                        <th className="px-6 py-4">Turno ID / Sucursal</th>
+                        <th className="px-6 py-4">Cajero</th>
+                        <th className="px-6 py-4">Período</th>
+                        <th className="px-6 py-4 text-right">Venta Total</th>
+                        <th className="px-6 py-4 text-center">Diferencia</th>
+                        <th className="px-6 py-4 text-center">Alertas</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850/60">
+                      {shifts.length > 0 ? (
+                        shifts.map((shift: ShiftData) => {
+                          const isSelected = selectedShift?.opening_entry === shift.opening_entry;
+                          const hasUSD = shift.usd_sales_count > 0;
+                          
+                          // Calcular descuadre neto sumando diferencias de métodos de pago
+                          const netDiff = shift.closing_details?.reduce((sum: number, det: ShiftClosingDetail) => sum + (det.difference || 0), 0) || 0;
+                          
+                          return (
+                            <tr 
+                              key={shift.opening_entry} 
+                              onClick={() => setSelectedShift(shift)}
+                              className={`cursor-pointer transition-colors ${
+                                isSelected 
+                                  ? "bg-indigo-500/10 hover:bg-indigo-500/15 border-l-4 border-indigo-500" 
+                                  : "hover:bg-slate-900/35"
+                              }`}
+                            >
+                              <td className="px-6 py-4">
+                                <span className="font-bold text-white block text-xs">{shift.closing_entry || shift.opening_entry}</span>
+                                <span className="text-[10px] text-slate-400 font-semibold">{shift.pos_profile}</span>
+                              </td>
+                              <td className="px-6 py-4 text-xs font-bold text-slate-200">{shift.user.split("@")[0]}</td>
+                              <td className="px-6 py-4 text-xs font-semibold text-slate-400">
+                                <span className="block">{shift.period_start_date.split(".")[0]}</span>
+                                <span className="text-[9px] text-slate-500">
+                                  {shift.status === "Open" ? "🟢 En curso..." : `🔴 Cerrado: ${shift.period_end_date.split(".")[0]}`}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right font-black text-xs text-white">
+                                ${shift.grand_total.toFixed(2)}
+                              </td>
+                              <td className="px-6 py-4 text-center text-xs font-black">
+                                {shift.status === "Open" ? (
+                                  <span className="text-slate-500 font-semibold">—</span>
+                                ) : netDiff === 0 ? (
+                                  <span className="text-emerald-400">Cuadrado</span>
+                                ) : (
+                                  <span className={netDiff < 0 ? "text-red-400" : "text-amber-400"}>
+                                    {netDiff > 0 ? "+" : ""}${netDiff.toFixed(2)}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 text-center text-xs">
+                                {hasUSD && (
+                                  <span 
+                                    className="px-2 py-0.5 rounded-full font-black text-[9px] bg-sky-500/10 text-sky-400 border border-sky-500/20 animate-pulse"
+                                    title={`Contiene ${shift.usd_sales_count} ventas en dólares`}
+                                  >
+                                    💵 USD
+                                  </span>
+                                )}
+                                {!hasUSD && shift.status === "Open" && (
+                                  <span className="px-2 py-0.5 rounded-full font-bold text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                    Abierto
+                                  </span>
+                                )}
+                                {!hasUSD && shift.status === "Closed" && (
+                                  <span className="px-2 py-0.5 rounded-full font-bold text-[9px] bg-slate-900 text-slate-500 border border-slate-800">
+                                    Cerrado
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center text-slate-500 font-semibold">
+                            No se registran turnos de caja en este período.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* DETALLES DEL TURNO SELECCIONADO (Columna Derecha 1/3 de ancho) */}
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-6 h-fit">
+                {selectedShift ? (
+                  <div className="space-y-6 text-left animate-fade-in">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Detalle de Turno</span>
+                      <h3 className="text-lg font-black text-white mt-1">{selectedShift.closing_entry || selectedShift.opening_entry}</h3>
+                      <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mt-0.5" style={{ color: activeColor }}>
+                        {selectedShift.pos_profile}
+                      </p>
+                    </div>
+
+                    {/* Información Básica */}
+                    <div className="p-4 bg-slate-900/50 rounded-2xl border border-slate-850 space-y-2.5">
+                      <div className="flex justify-between text-xs font-semibold text-slate-400">
+                        <span>Cajero:</span>
+                        <span className="text-white font-bold">{selectedShift.user}</span>
+                      </div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-400">
+                        <span>Inicio:</span>
+                        <span className="text-white font-bold">{selectedShift.period_start_date.split(".")[0]}</span>
+                      </div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-400">
+                        <span>Estado:</span>
+                        <span className={`font-black uppercase tracking-wider text-[9px] px-2 py-0.5 rounded-full border ${
+                          selectedShift.status === "Open" 
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                            : "bg-slate-950 text-slate-400 border-slate-800"
+                        }`}>
+                          {selectedShift.status === "Open" ? "Abierto" : "Cerrado"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-400 pt-2.5 border-t border-slate-850">
+                        <span>Total Tickets:</span>
+                        <span className="text-white font-black">{selectedShift.sales_count} ventas</span>
+                      </div>
+                      <div className="flex justify-between text-xs font-semibold text-slate-400">
+                        <span>Ventas del Turno:</span>
+                        <span className="text-white font-black">${selectedShift.sales_total.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    {/* AUDITORÍA DE DÓLARES (Visible únicamente si hay ventas en USD) */}
+                    {selectedShift.usd_sales_count > 0 && (
+                      <div className="p-4 bg-sky-950/20 border border-sky-500/20 rounded-2xl space-y-3">
+                        <div className="flex items-center gap-2 text-sky-400">
+                          <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          <h4 className="text-xs font-black uppercase tracking-wider">Auditoría: Caja de Dólares</h4>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-normal font-medium">
+                          Este turno contiene <strong>{selectedShift.usd_sales_count}</strong> transacciones pagadas en dólares. Validá la presencia física de los dólares en el cajón de efectivo:
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
+                            <span className="text-[8px] font-black uppercase text-slate-500 block leading-none">Billetes en USD:</span>
+                            <span className="text-sm font-black text-sky-400 block mt-1">${selectedShift.usd_amount_collected.toFixed(2)} USD</span>
+                          </div>
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-850">
+                            <span className="text-[8px] font-black uppercase text-slate-500 block leading-none">Tasa Promedio:</span>
+                            <span className="text-sm font-black text-white block mt-1">
+                              ${((selectedShift?.usd_invoices?.reduce((sum: number, inv) => sum + inv.exchange_rate, 0) || 0) / (selectedShift?.usd_sales_count || 1)).toFixed(2)} MXN
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* RECONCILIACIÓN / ARQUEO GENERAL DE EFECTIVO */}
+                    <div>
+                      <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2.5">Arqueo de Efectivo</h4>
+                      <div className="space-y-2">
+                        {selectedShift?.closing_details && selectedShift.closing_details.length > 0 ? (
+                          selectedShift.closing_details.map((detail: ShiftClosingDetail) => {
+                            const isMismatch = (detail.difference || 0) !== 0;
+                            return (
+                              <div key={detail.mode_of_payment} className="p-3 bg-slate-900/35 rounded-xl border border-slate-850 space-y-1.5">
+                                <div className="flex justify-between items-center text-xs">
+                                  <span className="font-bold text-white">{detail.mode_of_payment === "Cash" ? "Efectivo (MXN)" : detail.mode_of_payment === "Credit Card" ? "Tarjeta" : detail.mode_of_payment}</span>
+                                  {isMismatch && (
+                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${
+                                      detail.difference < 0 
+                                        ? "bg-red-500/10 text-red-400 border-red-500/20 animate-pulse" 
+                                        : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                    }`}>
+                                      Descuadre: {detail.difference > 0 ? "+" : ""}${detail.difference.toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-3 gap-1 text-[9px] font-bold text-slate-500 uppercase pt-1 border-t border-slate-900/60">
+                                  <div>
+                                    <span>Inicial:</span>
+                                    <span className="block text-slate-300 font-extrabold text-[10px]">${detail.opening_amount.toFixed(2)}</span>
+                                  </div>
+                                  <div>
+                                    <span>Esperado:</span>
+                                    <span className="block text-slate-300 font-extrabold text-[10px]">${detail.expected_amount.toFixed(2)}</span>
+                                  </div>
+                                  <div>
+                                    <span>Declarado:</span>
+                                    <span className="block text-white font-extrabold text-[10px]">${(detail.closing_amount || 0).toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="text-slate-500 text-xs py-4 text-center">Sin detalles de reconciliación.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* LISTADO DE TICKETS DEL TURNO */}
+                    <div>
+                      <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-2.5">Facturas Emitidas ({selectedShift?.invoices?.length || 0})</h4>
+                      <div className="max-h-48 overflow-y-auto border border-slate-850 rounded-2xl divide-y divide-slate-900/60 bg-slate-950/40">
+                        {selectedShift?.invoices && selectedShift.invoices.length > 0 ? (
+                          selectedShift.invoices.map((inv: ShiftInvoice) => {
+                            const isUsdInvoice = inv.remarks && inv.remarks.includes("[Pago USD]");
+                            return (
+                              <div key={inv.name} className="p-3 hover:bg-slate-900/35 transition-colors flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <span className="text-xs font-bold text-white block">{inv.name}</span>
+                                  <span className="text-[9px] text-slate-500 block font-medium">{inv.creation.split(" ")[1]?.split(".")[0] || ""} - {inv.customer_name || "General"}</span>
+                                  {isUsdInvoice && (
+                                    <span className="inline-block mt-1 text-[8px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">
+                                      Pago USD
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-right space-y-0.5">
+                                  <span className="text-xs font-black text-white block">${inv.grand_total.toFixed(2)}</span>
+                                  <span className={`text-[8px] font-black uppercase tracking-wider ${
+                                    inv.docstatus === 0 ? "text-slate-500" : "text-emerald-400"
+                                  }`}>
+                                    {inv.docstatus === 0 ? "Borrador" : "Completado"}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="text-slate-500 text-xs py-6 text-center">Sin tickets en este turno.</div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center py-20 px-6 border border-slate-850 border-dashed rounded-3xl">
+                    <svg className="h-8 w-8 text-slate-700 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                    </svg>
+                    <span className="text-xs font-semibold leading-relaxed">Seleccioná un turno del listado para auditar sus detalles y conciliar los montos de caja.</span>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );
