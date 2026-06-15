@@ -4,6 +4,19 @@ import type { NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   const url = request.nextUrl.clone();
 
+  const getInternalOrigin = () => {
+    const configured = process.env.FRAPPE_INTERNAL_URL?.trim();
+    if (configured) {
+      return configured.endsWith("/") ? configured.slice(0, -1) : configured;
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      return null;
+    }
+
+    return "http://frontend:8080";
+  };
+
   // 1. If it's a customer-facing public page request: /c/[tenant]
   const pathParts = url.pathname.split("/");
   if (pathParts[1] === "c" && pathParts[2]) {
@@ -37,9 +50,11 @@ export function proxy(request: NextRequest) {
     }
 
     // Resolve base domain dynamically
-    let baseDomain = "localhost";
+    let baseDomain = process.env.NODE_ENV !== "production" ? "localhost" : "localhost";
     const isIP = /^[0-9.]+$/.test(hostname);
-    if (isIP) {
+    if (process.env.NODE_ENV !== "production") {
+      baseDomain = "localhost";
+    } else if (isIP) {
       baseDomain = hostname;
     } else if (hostname.includes("localhost")) {
       baseDomain = "localhost";
@@ -54,32 +69,24 @@ export function proxy(request: NextRequest) {
       }
     }
 
-    // Determine the virtual base domain for Gunicorn site directory resolution
-    const virtualBaseDomain = isIP ? "localhost" : baseDomain;
+    // Determine the virtual base domain for site name resolution
+    const virtualBaseDomain = process.env.NODE_ENV !== "production" ? "localhost" : isIP ? "localhost" : baseDomain;
 
-    let backendHost = "";
     let siteName = "";
     if (tenantSubdomain && tenantSubdomain !== "master" && tenantSubdomain !== "admin" && tenantSubdomain !== "frontend") {
-      backendHost = `${tenantSubdomain}.${virtualBaseDomain}:8080`;
       siteName = `${tenantSubdomain}.${virtualBaseDomain}`;
-    } else {
-      // Default to master site backend
+    } else if (hostname.includes("localhost") || hostname.endsWith(".local") || isIP) {
       siteName = `frontend.${virtualBaseDomain}`;
-      if (virtualBaseDomain === "localhost") {
-        backendHost = "frontend.localhost:8080";
-      } else if (virtualBaseDomain === "local") {
-        backendHost = "frontend.local:8080";
-      } else {
-        backendHost = `frontend.${virtualBaseDomain}:8080`;
-      }
+    } else {
+      siteName = hostname;
     }
 
-    // Rewrite the destination using backendHost to ensure Next.js sends the correct Host header
-    const destination = `http://${backendHost}${url.pathname}${url.search}`;
+    const upstreamOrigin = getInternalOrigin() ?? `http://${siteName}:8080`;
+    const destination = `${upstreamOrigin}${url.pathname}${url.search}`;
 
-    // Clone headers and inject Host and site name headers for Frappe's multi-tenant resolution
+    // Clone headers and inject site name headers for Frappe's multi-tenant resolution
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("Host", backendHost);
+    requestHeaders.set("Host", siteName);
     requestHeaders.set("X-Frappe-Site-Name", siteName);
 
     return NextResponse.rewrite(new URL(destination), {

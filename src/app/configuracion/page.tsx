@@ -501,6 +501,17 @@ export default function ConfiguracionPage() {
   // Guardar configuración general
   const handleSaveChanges = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (configLoading || !saasConfig) {
+      setErrorMsg("Esperá a que cargue la configuración antes de guardar.");
+      return;
+    }
+
+    const resolvedCompanyName = companyName.trim() || saasConfig.company_name || saasConfig.client_name || "";
+    if (!resolvedCompanyName) {
+      setErrorMsg("Configurá el nombre de la compañía antes de guardar.");
+      return;
+    }
+
     setUpdating(true);
     setSuccessMsg(null);
     setErrorMsg(null);
@@ -573,7 +584,7 @@ export default function ConfiguracionPage() {
           has_services: hasServices ? 1 : 0,
           has_products: hasProducts ? 1 : 0,
           // Nuevos campos de marca e identidad comercial
-          company_name: companyName,
+          company_name: resolvedCompanyName,
           company_logo: finalLogoUrl,
           company_tax_id: companyTaxId,
           company_address: companyAddress,
@@ -622,7 +633,7 @@ export default function ConfiguracionPage() {
             custom_country: country,
             custom_currency: currency,
             // Actualizar identidad en local
-            company_name: companyName,
+            company_name: resolvedCompanyName,
             company_logo: finalLogoUrl,
             company_tax_id: companyTaxId,
             company_address: companyAddress,
@@ -2222,7 +2233,7 @@ export default function ConfiguracionPage() {
         <button
           type="submit"
           form="config-form"
-          disabled={updating}
+          disabled={updating || configLoading || !saasConfig}
           className="fixed bottom-8 right-8 z-50 rounded-2xl px-6 py-4 text-sm font-black text-white shadow-2xl transition-all duration-300 hover:brightness-110 hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer flex items-center gap-2 animate-fade-in"
           style={{ backgroundColor: primaryColor }}
         >
