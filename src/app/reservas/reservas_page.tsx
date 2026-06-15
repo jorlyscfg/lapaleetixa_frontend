@@ -1,8 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect, react-hooks/purity */
+
+import React, { useState, useEffect, useCallback } from "react";
 import { useFrappeAuth } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomDatePicker } from "../components/custom_date_picker";
+import { CatalogImageTile } from "../components/catalog_image_tile";
 import AdminEventsPanel from "./admin_events_panel";
 
 interface FeatureConfig {
@@ -25,14 +29,7 @@ interface CartItem {
   rate: number;
 }
 
-const CATEGORIES = [
-  { id: "all", label: "🍦 Todos" },
-  { id: "agua", label: "💧 Agua" },
-  { id: "crema", label: "🥛 Crema" },
-  { id: "bolis", label: "⚡ Bolis" },
-  { id: "nieves", label: "❄️ Nieves" },
-  { id: "otros", label: "🍭 Otros" }
-];
+
 
 const PRESET_COMBOS = [
   {
@@ -68,14 +65,7 @@ const PRESET_COMBOS = [
   }
 ];
 
-const getProductCategory = (itemName: string) => {
-  const name = itemName.toLowerCase();
-  if (name.includes("paleta de agua") || name.includes("trompito de agua")) return "agua";
-  if (name.includes("paleta de crema") || name.includes("trompito de crema")) return "crema";
-  if (name.includes("bolis saborines")) return "bolis";
-  if (name.includes("nieve en vaso")) return "nieves";
-  return "otros";
-};
+
 
 export default function ReservasPage() {
   const { currentUser, isLoading: authLoading } = useFrappeAuth();
@@ -91,6 +81,8 @@ export default function ReservasPage() {
   // Pestañas y rol de administración
   const [activeTab, setActiveTab] = useState<"reserve" | "pending_events">("reserve");
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
 
   // Efecto para activar pestaña de pedidos pendientes al venir desde una notificación
   useEffect(() => {
@@ -130,10 +122,10 @@ export default function ReservasPage() {
 
   // Filtros de Productos para agregar al evento
   const [productSearch, setProductSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedCategory, setSelectedCategory] = useState("Todos");
 
   // Helper para interactuar con Frappe
-  const callFrappeAPI = async (method: string, args: any = {}) => {
+  const callFrappeAPI = useCallback(async (method: string, args: any = {}) => {
     const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
     const response = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.${method}`, {
       method: "POST",
@@ -149,10 +141,10 @@ export default function ReservasPage() {
     }
     const data = await response.json();
     return data.message;
-  };
+  }, []);
 
   // Cargar disponibilidad para la fecha seleccionada
-  const fetchAvailability = async (date: string) => {
+  const fetchAvailability = useCallback(async (date: string) => {
     setAvailabilityLoading(true);
     setErrorMessage(null);
     try {
@@ -164,7 +156,7 @@ export default function ReservasPage() {
     } finally {
       setAvailabilityLoading(false);
     }
-  };
+  }, [callFrappeAPI]);
 
   // Cargar configuraciones de marca blanca
   useEffect(() => {
@@ -216,12 +208,33 @@ export default function ReservasPage() {
     }
   }, [currentUser]);
 
+  // Generar enlace dinámico para compartir con clientes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      let tenantName = "";
+      const pathParts = window.location.pathname.split("/");
+      if (pathParts[1] === "c" && pathParts[2]) {
+        tenantName = pathParts[2];
+      }
+      if (!tenantName) {
+        // Leer de las cookies
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; tenant_name=`);
+        if (parts.length === 2) {
+          tenantName = parts.pop()?.split(";").shift() || "";
+        }
+      }
+      tenantName = tenantName || "frontend";
+      setShareUrl(`${window.location.protocol}//${window.location.host}/c/${tenantName}/reservas`);
+    }
+  }, []);
+
   // Actualizar disponibilidad cuando cambia la fecha
   useEffect(() => {
     if (selectedDate) {
       fetchAvailability(selectedDate);
     }
-  }, [selectedDate]);
+  }, [selectedDate, fetchAvailability]);
 
   // Búsqueda de clientes debounced
   useEffect(() => {
@@ -241,7 +254,7 @@ export default function ReservasPage() {
     } else {
       setSearchResults([]);
     }
-  }, [customerQuery]);
+  }, [customerQuery, callFrappeAPI]);
 
   // Cargar catálogo de helados para agregar
   const [items, setItems] = useState<any[]>([]);
@@ -259,7 +272,7 @@ export default function ReservasPage() {
       }
     }
     fetchItems();
-  }, []);
+  }, [callFrappeAPI]);
 
   // Agregar producto al carrito del evento
   const handleAddProduct = (item: any) => {
@@ -371,9 +384,11 @@ export default function ReservasPage() {
   // Filtrado
   const filteredProducts = items?.filter((item) => {
     const matchesSearch = item.item_name.toLowerCase().includes(productSearch.toLowerCase());
-    const matchesCategory = selectedCategory === "all" || getProductCategory(item.item_name) === selectedCategory;
+    const matchesCategory = selectedCategory === "Todos" || item.item_group === selectedCategory;
     return matchesSearch && matchesCategory;
   }) || [];
+
+  const categories = ["Todos", ...Array.from(new Set(items?.map(item => item.item_group).filter(Boolean) || []))];
 
   const cartTotal = cart.reduce((sum, item) => sum + item.qty * item.rate, 0);
   const primaryColor = saasConfig?.colors?.primary || "#3498db";
@@ -391,55 +406,30 @@ export default function ReservasPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden">
-      
-      {/* Header Glassmorphism */}
-      <header className="bg-slate-950/80 backdrop-blur-md border-b border-slate-850 px-6 py-4 flex items-center justify-between shadow-lg sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-400 to-teal-500 flex items-center justify-center font-black text-white text-lg shadow-md">
-            EV
-          </div>
-          <div>
-            <h1 className="text-base font-black text-white tracking-wide">Reservas de Eventos</h1>
-            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-              {saasConfig?.client_name || "La Paletixa"} — Marca Blanca
-            </p>
-          </div>
-        </div>
-
-        {/* Toggles de administrador para cambiar de vista */}
-        {isAdmin && (
+      {isAdmin && (
+        <div className="px-4 sm:px-6 lg:px-8 pt-6 flex-shrink-0">
           <div className="tab-container">
             <button
               type="button"
               onClick={() => setActiveTab("reserve")}
               className={`tab-button ${activeTab === "reserve" ? "active" : ""}`}
             >
-              Registrar Reserva
+              📅 <span>Registrar Reserva</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("pending_events")}
               className={`tab-button ${activeTab === "pending_events" ? "active" : ""}`}
             >
-              Eventos Pendientes
+              📋 <span>Eventos Pendientes</span>
             </button>
           </div>
-        )}
-
-        <button
-          onClick={() => router.push("/")}
-          className="text-slate-400 hover:text-white p-2 rounded-xl border border-slate-850 hover:bg-slate-900 transition-all active:scale-95 cursor-pointer"
-          title="Ir al Dashboard"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-          </svg>
-        </button>
-      </header>
+        </div>
+      )}
 
       {/* Condicional de pestañas para administrador o cliente normal */}
       {activeTab === "pending_events" && isAdmin ? (
-        <div className="flex-1 w-full overflow-y-auto">
+        <div className="flex-1 w-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 pb-32">
           <AdminEventsPanel primaryColor={primaryColor} callFrappeAPI={callFrappeAPI} />
         </div>
       ) : (
@@ -447,18 +437,17 @@ export default function ReservasPage() {
         <form onSubmit={handleReserveSubmit} className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-y-auto pb-32">
         
         {/* PANEL IZQUIERDO: Calendario, Disponibilidad y Datos de Contacto (4/12) */}
-        <div className="lg:col-span-4 space-y-6">
+        <div className="lg:col-span-4 space-y-6 order-2 lg:order-1">
           <div className="bg-slate-950 p-6 rounded-3xl border border-slate-850 shadow-xl space-y-4 text-base">
             <h3 className="text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
               Fecha del Evento
             </h3>
             
-            <input
-              type="date"
+            <CustomDatePicker
               value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-base text-white focus:border-emerald-500 focus:outline-none font-bold"
+              onChange={(val) => setSelectedDate(val)}
+              className="focus:border-emerald-500"
             />
 
             {/* Caja de Disponibilidad del Recurso */}
@@ -470,32 +459,13 @@ export default function ReservasPage() {
                 </div>
               ) : availability ? (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-400 font-semibold">Recurso Agnóstico:</span>
-                    <span className="text-sm font-black text-white uppercase tracking-wide bg-slate-900 px-3 py-1 rounded-md border border-slate-800">
-                      {availability.item_code}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-center">
-                    <div className="bg-slate-900/60 p-3 rounded-2xl border border-slate-850">
-                      <span className="text-xs font-black text-slate-550 uppercase tracking-widest block">Capacidad:</span>
-                      <span className="text-xl font-black text-white mt-1 block">{availability.max_assets}</span>
-                    </div>
-
-                    <div className="bg-slate-900/60 p-3 rounded-2xl border border-slate-850">
-                      <span className="text-xs font-black text-slate-550 uppercase tracking-widest block">Reservas:</span>
-                      <span className="text-xl font-black text-white mt-1 block">{availability.already_booked}</span>
-                    </div>
-                  </div>
-
                   <div className={`p-4 rounded-2xl border text-center ${
                     availability.available_qty > 0
                       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
                       : "bg-red-500/10 border-red-500/20 text-red-400 animate-pulse"
                   }`}>
                     <span className="text-xs font-black uppercase tracking-widest block mb-1">
-                      {availability.available_qty > 0 ? "Disponibilidad libre" : "Fecha Agotada"}
+                      {availability.available_qty > 0 ? "Disponibilidad de Carritos" : "Fecha Agotada"}
                     </span>
                     <p className="text-lg font-black leading-none">
                       {availability.available_qty} libres
@@ -506,6 +476,37 @@ export default function ReservasPage() {
                 <p className="text-sm text-slate-500 text-center py-4">Seleccioná una fecha para ver disponibilidad.</p>
               )}
             </div>
+
+            {/* Compartir Enlace con Clientes (Solo visible para Administradores) */}
+            {isAdmin && shareUrl && (
+              <div className="mt-4 p-4 rounded-2xl bg-indigo-950/40 border border-indigo-900/50 space-y-2.5">
+                <span className="text-xs font-black uppercase tracking-widest text-indigo-400 block">
+                  🔗 Enlace para Clientes
+                </span>
+                <p className="text-xs text-slate-400 leading-normal">
+                  Compartí este enlace con tus clientes para que registren sus propias reservas directamente:
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareUrl}
+                    className="flex-1 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-300 outline-none select-all truncate font-sans"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(shareUrl);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2000);
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white border-0 px-4 py-2 rounded-xl text-xs font-black transition-all active:scale-95 cursor-pointer shrink-0"
+                  >
+                    {copiedLink ? "¡Copiado!" : "Copiar"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Configuración de Cliente / Datos de Contacto de Invitado */}
@@ -652,7 +653,7 @@ export default function ReservasPage() {
         </div>
 
         {/* PANEL CENTRAL/DERECHO: Catálogo y Reserva (8/12) */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className="lg:col-span-8 space-y-6 order-1 lg:order-2">
           
           {successMessage && (
             <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-sm text-emerald-400 font-semibold">
@@ -714,20 +715,20 @@ export default function ReservasPage() {
 
               {/* Pestañas Horizontales */}
               <div className="flex flex-wrap gap-1.5 border-b border-slate-850 pb-3">
-                {CATEGORIES.map((cat) => {
-                  const isActive = selectedCategory === cat.id;
+                {categories.map((cat) => {
+                  const isActive = selectedCategory === cat;
                   return (
                     <button
-                      key={cat.id}
+                      key={cat}
                       type="button"
-                      onClick={() => setSelectedCategory(cat.id)}
+                      onClick={() => setSelectedCategory(cat)}
                       className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition-all active:scale-95 cursor-pointer border ${
                         isActive
                           ? "text-white border-white bg-slate-900"
                           : "bg-slate-900/25 border-slate-850 text-slate-400 hover:border-slate-800 hover:text-white"
                       }`}
                     >
-                      {cat.label}
+                      {cat}
                     </button>
                   );
                 })}
@@ -744,12 +745,6 @@ export default function ReservasPage() {
                 filteredProducts.map((p) => {
                   const cartItem = cart.find((i) => i.item_code === p.name);
                   const qty = cartItem ? cartItem.qty : 0;
-                  const itemUrl = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
-                  const imageUrl = p.image
-                    ? p.image.startsWith("http")
-                      ? p.image
-                      : `${itemUrl}${p.image}`
-                    : null;
 
                   return (
                     <div
@@ -757,17 +752,12 @@ export default function ReservasPage() {
                       className="group rounded-2xl border border-slate-850 bg-slate-900/20 hover:bg-slate-900/40 p-3 flex flex-col justify-between hover:border-slate-750 transition-all hover:scale-[1.01] h-[260px]"
                     >
                       {/* Imagen con Aspect Ratio */}
-                      <div className="aspect-square w-full rounded-xl bg-slate-950 flex items-center justify-center overflow-hidden relative border border-slate-850">
-                        {imageUrl ? (
-                          <img
-                            src={imageUrl}
-                            alt={p.item_name}
-                            className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-                          />
-                        ) : (
-                          <span className="text-2xl">🍦</span>
-                        )}
-                      </div>
+                      <CatalogImageTile
+                        className="aspect-square w-full"
+                        src={p.image}
+                        alt={p.item_name}
+                        imageClassName="group-hover:scale-105 transition-transform duration-300"
+                      />
 
                       {/* Detalles del Sabor */}
                       <div className="mt-2 min-w-0">
@@ -776,7 +766,7 @@ export default function ReservasPage() {
                         </span>
                         <div className="flex items-center justify-between gap-1 mt-0.5">
                           <span className="text-xs text-slate-350 font-bold">${(p.standard_rate || 14.0).toFixed(2)} / pz</span>
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500 font-extrabold truncate">{getProductCategory(p.item_name)}</span>
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500 font-extrabold truncate">{p.item_group}</span>
                         </div>
                       </div>
 

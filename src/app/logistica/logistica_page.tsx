@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth, useFrappeGetDocList, useFrappeCreateDoc } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomSelect } from "../components/custom_select";
+import { CatalogImageTile } from "../components/catalog_image_tile";
 
 interface FeatureConfig {
   client_name: string;
@@ -21,8 +23,8 @@ export default function LogisticsPage() {
   const router = useRouter();
 
   // Estados de control
-  const [fromWarehouse, setFromWarehouse] = useState<string>("Fabrica - LP");
-  const [toWarehouse, setToWarehouse] = useState<string>("Sucursal 1 - LP");
+  const [fromWarehouse, setFromWarehouse] = useState<string>("");
+  const [toWarehouse, setToWarehouse] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
   const [adjustStep, setAdjustStep] = useState<number>(1);
@@ -37,17 +39,42 @@ export default function LogisticsPage() {
   const [saasConfig, setSaasConfig] = useState<FeatureConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
 
-  const isLogisticaUser = currentUser === "logistica@lapaletixa.com";
+  // Consultar dinámicamente los almacenes de la compañía
+  const { data: dbWarehouses, isLoading: warehousesLoading } = useFrappeGetDocList("Warehouse", {
+    fields: ["name", "warehouse_name"],
+    filters: [
+      ["company", "=", saasConfig?.client_name || "La Paletixa"],
+      ["is_group", "=", 0],
+      ["disabled", "=", 0]
+    ],
+    limit: 100
+  });
 
-  // Almacenes disponibles
-  const warehouses = [
-    { name: "Fabrica - LP", label: "🏭 Fábrica Central" },
-    { name: "Sucursal 1 - LP", label: "🍦 Sucursal 1" },
-    { name: "Sucursal 2 - LP", label: "🍦 Sucursal 2" },
-    { name: "Sucursal 3 - LP", label: "🍦 Sucursal 3" },
-    { name: "Sucursal 4 - LP", label: "🍦 Sucursal 4" },
-    { name: "Distribucion - LP", label: "📦 Distribución" }
-  ];
+  const getWarehouseLabel = (name: string) => {
+    const cleanName = name.split(" - ")[0];
+    if (cleanName.startsWith("Fabrica")) return `🏭 ${cleanName}`;
+    if (cleanName.startsWith("Distribucion")) return `📦 ${cleanName}`;
+    if (cleanName.startsWith("Sucursal")) return `🍦 ${cleanName}`;
+    return `🏪 ${cleanName}`;
+  };
+
+  const warehouses = dbWarehouses?.map((w: { name: string; warehouse_name?: string | null }) => ({
+    name: w.name,
+    label: getWarehouseLabel(w.warehouse_name || w.name)
+  })) || [];
+
+  // Inicializar almacenes por defecto una vez cargados
+  useEffect(() => {
+    if (dbWarehouses && dbWarehouses.length > 0) {
+      const factory = dbWarehouses.find(w => w.name.toLowerCase().includes("fabrica"));
+      const defaultFrom = factory ? factory.name : dbWarehouses[0].name;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFromWarehouse(defaultFrom);
+      
+      const sucursal = dbWarehouses.find(w => w.name.toLowerCase().includes("sucursal") && w.name !== defaultFrom);
+      setToWarehouse(sucursal ? sucursal.name : (dbWarehouses[1] ? dbWarehouses[1].name : dbWarehouses[0].name));
+    }
+  }, [dbWarehouses]);
 
   // 1. Cargar configuraciones de SaaS y Feature Flags
   useEffect(() => {
@@ -89,7 +116,7 @@ export default function LogisticsPage() {
     fields: ["name", "item_name", "item_group", "image", "standard_rate", "has_variants", "stock_uom"],
     filters: [
       ["disabled", "=", 0],
-      ["item_group", "=", "Products"],
+      ["is_sales_item", "=", 1],
       ["has_variants", "=", 0],
       ["name", "!=", "Carrito Paletero"]
     ],
@@ -100,7 +127,7 @@ export default function LogisticsPage() {
   const { data: bins, isLoading: binsLoading, mutate: mutateBins } = useFrappeGetDocList("Bin", {
     fields: ["item_code", "warehouse", "actual_qty"],
     filters: [
-      ["warehouse", "in", warehouses.map(w => w.name)]
+      ["warehouse", "in", warehouses.length > 0 ? warehouses.map(w => w.name) : ["dummy"]]
     ],
     limit: 1000
   });
@@ -145,7 +172,7 @@ export default function LogisticsPage() {
   const handleStockTransferSubmit = async () => {
     // Filtrar sólo ítems con cantidad mayor a 0
     const itemsToTransfer = Object.entries(transferQuantities)
-      .filter(([_, qty]) => qty > 0)
+      .filter(([, qty]) => qty > 0)
       .map(([itemCode, qty]) => {
         const item = items?.find(i => i.name === itemCode);
         return {
@@ -176,7 +203,7 @@ export default function LogisticsPage() {
       docstatus: 1, // Auto-submit to update stock ledger immediately
       from_warehouse: fromWarehouse,
       to_warehouse: toWarehouse,
-      company: "La Paletixa",
+      company: saasConfig?.client_name || "La Paletixa",
       items: itemsToTransfer
     };
 
@@ -187,9 +214,10 @@ export default function LogisticsPage() {
       );
       handleResetQuantities();
       await mutateBins();
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error("Error registrando traspaso:", err);
-      setErrorMessage(err.message || "Ocurrió un error al registrar el traspaso de stock.");
+      setErrorMessage(message || "Ocurrió un error al registrar el traspaso de stock.");
     } finally {
       setUpdating(false);
     }
@@ -200,29 +228,18 @@ export default function LogisticsPage() {
     const matchesSearch = item.item_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           item.name.toLowerCase().includes(searchQuery.toLowerCase());
     
-    let matchesCategory = selectedCategory === "Todos";
-    if (selectedCategory === "Bolis") {
-      matchesCategory = item.item_name.startsWith("Bolis") || item.name.startsWith("Bolis");
-    } else if (selectedCategory === "Paletas") {
-      matchesCategory = item.item_name.startsWith("Paleta") || item.name.startsWith("Paleta");
-    } else if (selectedCategory === "Trompitos") {
-      matchesCategory = item.item_name.startsWith("Trompito") || item.name.startsWith("Trompito");
-    } else if (selectedCategory === "Eskimales") {
-      matchesCategory = item.item_name.includes("Eskimo") || item.name.includes("Eskimo");
-    } else if (selectedCategory === "Nieves") {
-      matchesCategory = item.item_name.startsWith("Nieve") || item.name.startsWith("Nieve");
-    }
+    const matchesCategory = selectedCategory === "Todos" || item.item_group === selectedCategory;
     
     return matchesSearch && matchesCategory;
   }) || [];
 
-  const categories = ["Todos", "Bolis", "Paletas", "Trompitos", "Eskimales", "Nieves"];
+  const categories = ["Todos", ...Array.from(new Set(items?.map(item => item.item_group).filter(Boolean) || []))];
   const activeColor = saasConfig?.colors?.primary || "#6366f1"; // Indigo default para logistica
 
   const totalTransferItemsCount = Object.values(transferQuantities).filter(qty => qty > 0).length;
   const totalTransferQtyCount = Object.values(transferQuantities).reduce((sum, qty) => sum + qty, 0);
 
-  if (authLoading || configLoading || itemsLoading || binsLoading) {
+  if (authLoading || configLoading || itemsLoading || binsLoading || warehousesLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100 font-sans">
         <div className="flex flex-col items-center gap-4">
@@ -243,62 +260,53 @@ export default function LogisticsPage() {
         {/* Panel de Control de Almacenes (GLASSMORPHISM) */}
         <div className="bg-slate-950 p-4 sm:p-6 rounded-3xl border border-slate-850 shadow-xl flex flex-col gap-6">
           <div className="space-y-1">
-            <h2 className="text-lg font-bold text-white">Logística de Almacén</h2>
-            <p className="text-xs text-slate-400">Seleccioná los almacenes para iniciar el flujo de traspaso de productos de forma segura.</p>
+            <p className="text-xs text-slate-450 font-bold uppercase tracking-wider">Traspaso de Stock entre Almacenes</p>
           </div>
 
-          <div className="flex flex-col items-center gap-4 md:flex-row md:items-stretch w-full">
+          <div className="flex flex-row items-center gap-1.5 md:gap-4 w-full">
             {/* Almacén Origen */}
-            <div className="flex-1 flex flex-col space-y-2 bg-slate-900/60 p-4 rounded-2xl border border-slate-800 w-full">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Desde (Almacén Origen)</label>
-              <select
+            <div className="flex-1 flex flex-col space-y-1 bg-slate-900/60 p-2 md:p-4 rounded-2xl border border-slate-800 w-full min-w-0">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden md:block">Desde (Almacén Origen)</label>
+              <CustomSelect
                 value={fromWarehouse}
-                onChange={(e) => {
-                  setFromWarehouse(e.target.value);
+                onChange={(val) => {
+                  setFromWarehouse(val);
                   handleResetQuantities();
                 }}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-              >
-                {warehouses
+                options={warehouses
                   .filter(w => w.name !== toWarehouse)
-                  .map(w => (
-                    <option key={w.name} value={w.name}>{w.label}</option>
-                  ))}
-              </select>
+                  .map(w => ({ value: w.name, label: w.label }))}
+              />
             </div>
 
             {/* Botón de Intercambio Táctil (Swap) */}
-            <div className="flex items-center justify-center p-2">
+            <div className="flex items-center justify-center p-0.5 md:p-2 flex-shrink-0">
               <button
                 type="button"
                 onClick={handleSwapWarehouses}
                 title="Intercambiar almacenes (Swap)"
-                className="rounded-full bg-indigo-500/10 p-3 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center shadow-md"
+                className="rounded-full bg-indigo-500/10 p-2.5 md:p-3 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center shadow-md"
               >
                 {/* Icono de Intercambio / Swap */}
-                <svg className="h-6 w-6 transform rotate-90 md:rotate-0 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <svg className="h-5 w-5 md:h-6 md:w-6 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                 </svg>
               </button>
             </div>
 
             {/* Almacén Destino */}
-            <div className="flex-1 flex flex-col space-y-2 bg-slate-900/60 p-4 rounded-2xl border border-slate-800 w-full">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Hacia (Almacén Destino)</label>
-              <select
+            <div className="flex-1 flex flex-col space-y-1 bg-slate-900/60 p-2 md:p-4 rounded-2xl border border-slate-800 w-full min-w-0">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden md:block">Hacia (Almacén Destino)</label>
+              <CustomSelect
                 value={toWarehouse}
-                onChange={(e) => {
-                  setToWarehouse(e.target.value);
+                onChange={(val) => {
+                  setToWarehouse(val);
                   handleResetQuantities();
                 }}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-              >
-                {warehouses
+                options={warehouses
                   .filter(w => w.name !== fromWarehouse)
-                  .map(w => (
-                    <option key={w.name} value={w.name}>{w.label}</option>
-                  ))}
-              </select>
+                  .map(w => ({ value: w.name, label: w.label }))}
+              />
             </div>
           </div>
 
@@ -406,19 +414,11 @@ export default function LogisticsPage() {
               >
                 <div>
                   {/* Foto o Icono */}
-                  <div className="aspect-square w-full rounded-2xl bg-slate-900 mb-4 flex items-center justify-center text-slate-700 overflow-hidden relative border border-slate-850">
-                    {item.image ? (
-                      <img 
-                        src={item.image.startsWith("http") ? item.image : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${item.image}`} 
-                        alt={item.item_name}
-                        className="object-cover w-full h-full"
-                      />
-                    ) : (
-                      <svg className="h-10 w-10 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                      </svg>
-                    )}
-                  </div>
+                  <CatalogImageTile
+                    className="aspect-square w-full mb-4"
+                    src={item.image}
+                    alt={item.item_name}
+                  />
 
                   <h3 className="font-extrabold text-base text-white leading-snug truncate">{item.item_name}</h3>
                   <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider font-semibold">{item.item_group}</p>

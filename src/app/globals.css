@@ -5,6 +5,10 @@
 :root {
   --background: #f3f4f6;
   --foreground: #0f172a;
+  --pwa-safe-area-top: env(safe-area-inset-top, 0px);
+  --pwa-safe-area-right: env(safe-area-inset-right, 0px);
+  --pwa-safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --pwa-safe-area-left: env(safe-area-inset-left, 0px);
 
   /* Modo Claro: Paleta Premium inspirada en Skote, Frest y Dashtic */
   --color-slate-50: #0f172a;   /* Texto principal de alto énfasis (Dark Slate) */
@@ -85,10 +89,41 @@ html:not(.dark) .text-emerald-400 { color: #059669 !important; }
 html:not(.dark) .text-amber-400 { color: #d97706 !important; }
 html:not(.dark) .text-red-400 { color: #dc2626 !important; }
 
-/* Bordes en Modo Claro */
-html:not(.dark) .border-slate-800 { border-color: var(--color-slate-800) !important; }
-html:not(.dark) .border-slate-850 { border-color: var(--color-slate-850) !important; }
-html:not(.dark) .border-slate-900 { border-color: var(--color-slate-850) !important; }
+/* Bordes Globales Dinámicos (Modo Claro / Modo Oscuro) */
+.border-slate-800 { border-color: var(--color-slate-800) !important; }
+.border-slate-850 { border-color: var(--color-slate-850) !important; }
+.border-slate-900 { border-color: var(--color-slate-900) !important; }
+
+/* Soporte de Opacidad para Bordes Custom */
+[class*="border-slate-850/"] { border-color: var(--color-slate-850) !important; }
+[class*="border-slate-800/"] { border-color: var(--color-slate-800) !important; }
+[class*="border-slate-900/"] { border-color: var(--color-slate-900) !important; }
+
+/* Soporte de Opacidad para Divisores (divide-y) Custom */
+[class*="divide-slate-850/"] > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-slate-850) !important; }
+[class*="divide-slate-800/"] > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-slate-800) !important; }
+[class*="divide-slate-900/"] > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-slate-900) !important; }
+
+/* Divisores Estándar (sin opacidad) */
+.divide-slate-850 > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-slate-850) !important; }
+.divide-slate-800 > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-slate-800) !important; }
+.divide-slate-900 > :not([hidden]) ~ :not([hidden]) { border-color: var(--color-slate-900) !important; }
+
+/* Corrección Global para Tablas: Evitar líneas blancas de alto contraste */
+table, tr, td, th {
+  border-color: inherit;
+}
+
+table thead,
+table thead tr,
+table thead th {
+  border-color: var(--color-slate-800) !important;
+}
+
+table tbody tr,
+table tbody td {
+  border-color: var(--color-slate-850) !important;
+}
 
 /* ========================================================
    OVERRAID DE BOTONES GLOBALES PARA MODO CLARO & HOVERS
@@ -243,6 +278,25 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/* PWA standalone safe-area support without adding browser-mode spacing on devices without insets. */
+.pwa-safe-area-bg {
+  background: var(--background);
+}
+
+.pwa-standalone-shell {
+  padding-top: var(--pwa-safe-area-top);
+  padding-right: var(--pwa-safe-area-right);
+  padding-left: var(--pwa-safe-area-left);
+}
+
+.pwa-safe-scroll {
+  padding-bottom: var(--pwa-safe-area-bottom);
+}
+
+.safe-area-bottom-6 {
+  bottom: calc(var(--pwa-safe-area-bottom) + 1.5rem) !important;
+}
+
 /* Custom scrollbar styling globally */
 ::-webkit-scrollbar {
   width: 8px;
@@ -294,6 +348,7 @@ body {
 
 .tab-container {
   display: flex;
+  flex-shrink: 0 !important;
   background-color: var(--color-slate-950);
   padding: 0.375rem; /* p-1.5 */
   border-radius: 1rem; /* rounded-2xl */
@@ -379,6 +434,8 @@ body {
   }
   .tab-button {
     flex-shrink: 0 !important; /* Evitar que las pestañas se encojan */
+    padding: 0.5rem 0.75rem !important; /* Más compacto en móviles */
+    font-size: 0.75rem !important;
   }
 
   /* 4. Transformar Contenedores Flex Complejos en Grillas Dashboard Estructuradas */
@@ -415,17 +472,23 @@ body {
     padding-bottom: 0.75rem !important;
   }
 
-  /* 5. Blindaje de Desbordamiento de Tablas (Scroll Horizontal Suave) */
-  table {
-    display: block !important;
-    width: 100% !important;
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-  }
+  /* 5. Blindaje de Desbordamiento de Tablas - Eliminado display:block para conservar alineación */
 
   /* 6. Optimización del Menú Lateral en Pantallas Ultra-Pequeñas */
   .fixed.inset-y-0.left-0.w-80 {
     width: 17rem !important;
+  }
+
+  /* 7. Comportamiento Responsivo Global de Botones y Pestañas con Iconos (Ocultar texto) */
+  .tab-button span,
+  button svg + span,
+  button svg ~ span {
+    display: none !important;
+  }
+
+  /* Excluir explícitamente los textos del menú lateral para que sigan siendo visibles */
+  .menu-nav button span {
+    display: inline !important;
   }
 }
 
@@ -470,4 +533,3 @@ body {
     display: none !important;
   }
 }
-

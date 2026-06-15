@@ -1,20 +1,39 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://lapaletixa.local:8080";
-console.log("[NextConfig] BACKEND_URL resolved to:", BACKEND_URL);
-
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["192.168.0.87", "lapaletixa.local", "lapaletixa.localhost", "lapaletixa.jegdev.com"],
+  allowedDevOrigins: [
+    "192.168.0.87",
+    "localhost",
+    "local",
+    "lapaletixa.local",
+    "lapaletixa.localhost",
+    "lapaletixa.jegdev.com",
+    "*.localhost",
+    "*.local"
+  ],
   output: "standalone",
-  async rewrites() {
+  async headers() {
     return [
       {
-        source: "/api/:path*",
-        destination: `${BACKEND_URL}/api/:path*`,
-      },
-      {
-        source: "/files/:path*",
-        destination: `${BACKEND_URL}/files/:path*`,
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "application/javascript; charset=utf-8",
+          },
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, max-age=0, must-revalidate",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'self'; script-src 'self'",
+          },
+          {
+            key: "Service-Worker-Allowed",
+            value: "/",
+          },
+        ],
       },
     ];
   },

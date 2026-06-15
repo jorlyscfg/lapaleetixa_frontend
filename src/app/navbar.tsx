@@ -4,26 +4,78 @@ import React, { useState, useEffect } from "react";
 import { useFrappeAuth } from "frappe-react-sdk";
 import { useRouter, usePathname } from "next/navigation";
 import { useSaaSConfig } from "./providers";
+import { ChatDrawer } from "./components/ChatDrawer";
+
+interface NotificationItem {
+  name: string;
+  message?: string;
+  reference_name?: string;
+  module?: string;
+  creation?: string;
+}
+
+type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "theme";
+
+const readPersistedTheme = (): Theme => {
+  if (typeof window === "undefined") return "dark";
+  return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+};
+
+const applyTheme = (nextTheme: Theme) => {
+  if (typeof document === "undefined") return;
+
+  document.documentElement.classList.toggle("dark", nextTheme === "dark");
+  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+};
 
 export function Navbar() {
   const { currentUser, logout } = useFrappeAuth();
   const { saasConfig } = useSaaSConfig();
   const router = useRouter();
   const pathname = usePathname();
+  const isCustomerRoute = pathname.startsWith("/c/");
+  const getCookieValue = (name: string) => {
+    if (typeof document === "undefined") return "";
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()?.split(";").shift() || "";
+    return "";
+  };
+  const isMasterSite = typeof window !== "undefined" && (
+    window.location.hostname === "localhost" || 
+    window.location.hostname === "127.0.0.1" || 
+    window.location.hostname.startsWith("frontend") || 
+    window.location.hostname.startsWith("erpadmin") ||
+    getCookieValue("tenant_name") === "master"
+  );
+
+  const isCashier = currentUser ? currentUser.startsWith("cajero.") : false;
+  const isProdUser = currentUser ? currentUser.startsWith("produccion@") : false;
+  const isLogisticaUser = currentUser ? currentUser.startsWith("logistica@") : false;
+  const isAdmin = !!(currentUser && !isCashier && !isProdUser && !isLogisticaUser);
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [theme, setTheme] = useState<Theme>(() => readPersistedTheme());
   const [isCustomer, setIsCustomer] = useState(false);
+  const [hasWholesaleSession] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return Boolean(localStorage.getItem("wholesale_session"));
+  });
+  const [chatOpen, setChatOpen] = useState(false);
+  const isCustomerView = isCustomer || hasWholesaleSession || (isCustomerRoute && Boolean(currentUser));
 
   // Estados de Notificaciones
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
 
   // Sintetizador de audio nativo Web Audio API (chime de cristal premium)
   const playChimeSound = () => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioWindow = window as Window & { webkitAudioContext?: typeof AudioContext };
+      const ctx = new (window.AudioContext || audioWindow.webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       
@@ -39,19 +91,19 @@ export function Navbar() {
       
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.6);
-    } catch (e) {
-      console.warn("AudioContext no admitido o aún no permitido por el navegador:", e);
+    } catch (err: unknown) {
+      console.warn("AudioContext no admitido o aún no permitido por el navegador:", err);
     }
   };
 
   // Helper para tiempo relativo
-  const getRelativeTime = (creationStr: string) => {
+  const getRelativeTime = (creationStr?: string) => {
     if (!creationStr) return "";
     try {
       const t = Date.parse(creationStr.replace(" ", "T"));
       if (isNaN(t)) return "";
       
-      const diffMs = Date.now() - t;
+      const diffMs = new Date().getTime() - t;
       const diffMins = Math.floor(diffMs / 60000);
       
       if (diffMins < 1) return "Hace un momento";
@@ -65,13 +117,13 @@ export function Navbar() {
       const diffDays = Math.floor(diffHours / 24);
       if (diffDays === 1) return "Hace 1 día";
       return `Hace ${diffDays} días`;
-    } catch (e) {
+    } catch {
       return "";
     }
   };
 
   // Acción al hacer clic en una notificación
-  const handleNotificationClick = async (notif: any) => {
+  const handleNotificationClick = async (notif: NotificationItem) => {
     try {
       const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
       await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.mark_notification_as_read`, {
@@ -86,18 +138,18 @@ export function Navbar() {
       setNotifDropdownOpen(false);
       
       if (notif.module === "Wholesale") {
-        window.location.href = "/puntos-fijos?tab=pendientes";
+        router.push("/mayoristas?tab=pendientes");
       } else if (notif.module === "Event") {
-        window.location.href = "/reservas?tab=pendientes";
+        router.push("/reservas?tab=pendientes");
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Error al marcar notificación como leída:", err);
     }
   };
 
   // Polling en segundo plano para notificaciones (cada 15 segundos)
   useEffect(() => {
-    if (!currentUser || isCustomer) return;
+    if (!currentUser || isCustomerView || !isAdmin) return;
 
     let prevUnread = 0;
 
@@ -131,24 +183,21 @@ export function Navbar() {
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 15000);
     return () => clearInterval(interval);
-  }, [currentUser, isCustomer]);
+  }, [currentUser, isCustomerView, isAdmin]);
 
-  // Cargar tema inicial en el montaje
+  // Redirigir administradores de plataforma fuera de páginas de inquilinos en el sitio maestro
   useEffect(() => {
-    const isDark = document.documentElement.classList.contains("dark");
-    setTheme(isDark ? "dark" : "light");
-  }, []);
+    if (isMasterSite && pathname !== "/" && currentUser) {
+      router.push("/");
+    }
+  }, [isMasterSite, pathname, currentUser, router]);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   const toggleTheme = () => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    setTheme(newTheme);
-    if (newTheme === "dark") {
-      document.documentElement.classList.add("dark");
-      localStorage.setItem("theme", "dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-      localStorage.setItem("theme", "light");
-    }
+    setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
   };
 
   // La configuración de SaaS se maneja de forma global mediante useSaaSConfig
@@ -161,9 +210,9 @@ export function Navbar() {
       try {
         // Si es administrador o personal interno, no tratar como cliente en el navbar
         const isCashier = userEmail.startsWith("cajero.");
-        const isProdUser = userEmail === "produccion@lapaletixa.com";
-        const isLogisticaUser = userEmail === "logistica@lapaletixa.com";
-        const isStaff = isCashier || isProdUser || isLogisticaUser || userEmail === "Administrator" || userEmail.includes("admin");
+        const isProdUser = userEmail.startsWith("produccion@");
+        const isLogisticaUser = userEmail.startsWith("logistica@");
+        const isStaff = isCashier || isProdUser || isLogisticaUser || userEmail === "Administrator" || userEmail.startsWith("admin@") || userEmail.includes("admin");
         if (isStaff) {
           setIsCustomer(false);
           return;
@@ -189,15 +238,11 @@ export function Navbar() {
   }, [currentUser]);
 
   // Si no hay sesión iniciada o es un cliente, no mostramos el navbar
-  if (!currentUser || isCustomer) return null;
-
-  const isCashier = currentUser.startsWith("cajero.");
-  const isProdUser = currentUser === "produccion@lapaletixa.com";
-  const isLogisticaUser = currentUser === "logistica@lapaletixa.com";
-  const isAdmin = currentUser && !isCashier && !isProdUser && !isLogisticaUser;
+  if (!currentUser && !isCustomerView) return null;
 
   // Determinar sucursal del cajero
-  const getSucursalName = (email: string) => {
+  const getSucursalName = (email: string | null | undefined) => {
+    if (!email) return "";
     if (email.includes(".s1.")) return "Sucursal 1";
     if (email.includes(".s2.")) return "Sucursal 2";
     if (email.includes(".s3.")) return "Sucursal 3";
@@ -214,9 +259,10 @@ export function Navbar() {
   const isDashboard = pathname === "/";
   const isConfiguracionPage = pathname === "/configuracion";
   const isReportesPage = pathname === "/reportes";
+  const isComprasPage = pathname === "/compras";
 
   // Control de visibilidad del botón para volver atrás
-  const showBackButton = !isDashboard && !isCashier && !isProdUser && !isLogisticaUser;
+  const showBackButton = !isDashboard && !isCashier && !isProdUser && !isLogisticaUser && !isCustomerView;
 
   const handleLogout = async () => {
     if (typeof window !== "undefined") {
@@ -337,16 +383,16 @@ export function Navbar() {
   return (
     <>
       <header className="w-full border-b border-slate-800 bg-slate-950/80 backdrop-blur-md z-50 print:hidden">
-        <div className="w-full flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="w-full flex h-16 items-center justify-between px-2 sm:px-6 lg:px-8">
           {/* Lado Izquierdo: Botón Hamburguesa + Botón Atrás + Branding + Badges */}
-          <div className="flex items-center gap-3">
-            {isAdmin && (
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            {!isCustomerView && isAdmin && (
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
                 title="Abrir Menú"
-                className="mr-1 rounded-full p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-800"
+                className="mr-0.5 sm:mr-1 rounded-full p-1.5 sm:p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-800"
               >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="h-4.5 w-4.5 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
               </button>
@@ -355,33 +401,33 @@ export function Navbar() {
             {showBackButton && (
               <button 
                 onClick={() => router.push("/")}
-                className="mr-2 rounded-full p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all active:scale-95 cursor-pointer"
+                className="mr-1 sm:mr-2 rounded-full p-1 sm:p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all active:scale-95 cursor-pointer"
               >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
               </button>
             )}
 
             <div 
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg"
+              className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg flex items-center justify-center text-white font-bold text-base sm:text-lg shadow-lg"
               style={{ backgroundColor: activeColor }}
             >
-              {saasConfig?.client_name?.[0] || "L"}
+              {isMasterSite ? "S" : (saasConfig?.client_name?.[0] || "L")}
             </div>
             
-            <span className="text-xl font-bold tracking-tight text-slate-100 hidden sm:inline">
-              {saasConfig?.client_name || "La Paletixa"}
+            <span className="text-base sm:text-xl font-bold tracking-tight text-slate-100 hidden sm:inline">
+              {isMasterSite ? "SaaS Plataforma" : (saasConfig?.client_name || "La Paletixa")}
             </span>
 
             {/* Badges dinámicos de sección */}
             {isPosPage && (
               <>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/10 animate-pulse">
+                <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/10 animate-pulse hidden sm:inline-block">
                   Punto de Venta
                 </span>
                 {sucursalName && (
-                  <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/10">
+                  <span className="text-[10px] sm:text-xs font-bold px-1.5 sm:px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/10">
                     {sucursalName}
                   </span>
                 )}
@@ -390,57 +436,66 @@ export function Navbar() {
 
             {isProduccionPage && (
               <>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/10">
+                <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/10 hidden sm:inline-block">
                   Inventario de Planta
                 </span>
-                <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-800 text-slate-350 border border-slate-700">
-                  Almacén: Fábrica
+                <span className="text-[10px] sm:text-xs font-bold px-1.5 sm:px-2.5 py-0.5 rounded bg-slate-800 text-slate-350 border border-slate-700">
+                  Fábrica
                 </span>
               </>
             )}
 
             {isLogisticaPage && (
               <>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/10 animate-pulse">
+                <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/10 animate-pulse hidden sm:inline-block">
                   Logística de Despacho
                 </span>
-                <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-800 text-slate-350 border border-slate-700">
-                  Traspaso de Inventario
+                <span className="text-[10px] sm:text-xs font-bold px-1.5 sm:px-2.5 py-0.5 rounded bg-slate-800 text-slate-350 border border-slate-700">
+                  Traspaso
                 </span>
               </>
             )}
 
             {isDashboard && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/10">
-                Panel Operativo
+              <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/10 hidden sm:inline-block">
+                {isMasterSite ? "Consola de Control" : "Panel Operativo"}
               </span>
             )}
 
             {isConfiguracionPage && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/10 animate-pulse">
+              <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/10 animate-pulse hidden sm:inline-block">
                 Configuración del Sistema
               </span>
             )}
 
             {isReportesPage && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/10 animate-pulse">
+              <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/10 animate-pulse hidden sm:inline-block">
                 Reportes del Administrador
+              </span>
+            )}
+
+            {isComprasPage && (
+              <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/10 animate-pulse hidden sm:inline-block">
+                Módulo de Compras
               </span>
             )}
           </div>
 
           {/* Lado Derecho: Identificación del usuario y Logout */}
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-400 hidden sm:inline">
-              {isPosPage ? "Cajero: " : isProduccionPage ? "Operario: " : isLogisticaPage ? "Logística: " : "Sesión: "}
-              <strong className="text-slate-200">{currentUser}</strong>
-            </span>
+          <div className="flex items-center gap-1.5 sm:gap-4">
+            {currentUser && (
+              <span className="text-sm text-slate-400 hidden sm:inline">
+                {isPosPage ? "Cajero: " : isProduccionPage ? "Operario: " : isLogisticaPage ? "Logística: " : isMasterSite ? "Admin Plataforma: " : "Sesión: "}
+                <strong className="text-slate-200">{currentUser}</strong>
+              </span>
+            )}
             {/* Botón de Notificaciones */}
-            <div className="relative">
-              <button
+            {!isCustomerView && isAdmin && (
+              <div className="relative">
+                <button
                 onClick={() => setNotifDropdownOpen(!notifDropdownOpen)}
                 title="Notificaciones"
-                className="rounded-full p-2 bg-slate-800 hover:bg-slate-700 text-slate-350 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-700 shadow-md relative"
+                className="rounded-full p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-350 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-700 shadow-md relative"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -459,7 +514,7 @@ export function Navbar() {
                     onClick={() => setNotifDropdownOpen(false)}
                   ></div>
                   
-                  <div className="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-850 bg-slate-950/95 backdrop-blur-xl shadow-2xl z-50 overflow-hidden animate-fade-in origin-top-right">
+                  <div className="absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl border border-slate-850 bg-slate-950/95 backdrop-blur-xl shadow-2xl z-50 overflow-hidden animate-fade-in origin-top-right">
                     <div className="flex items-center justify-between px-4 py-3 border-b border-slate-900 bg-slate-900/30">
                       <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Notificaciones</span>
                       {unreadCount > 0 ? (
@@ -521,11 +576,25 @@ export function Navbar() {
                 </>
               )}
             </div>
+            )}
+
+            {!isCustomerView && isAdmin && (
+              <button
+                onClick={() => setChatOpen(true)}
+                title="Asistente de IA"
+                className="rounded-full p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-indigo-400 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-700 shadow-md"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+              </button>
+            )}
 
             <button
               onClick={toggleTheme}
               title={theme === "dark" ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
-              className="rounded-full p-2 bg-slate-800 hover:bg-slate-700 text-slate-350 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-700 shadow-md"
+              suppressHydrationWarning
+              className="rounded-full p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-350 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-700 shadow-md"
             >
               {theme === "dark" ? (
                 // Sol para cambiar a claro
@@ -539,21 +608,24 @@ export function Navbar() {
                 </svg>
               )}
             </button>
-            <button
-              onClick={handleLogout}
-              className="rounded-full bg-slate-800 p-2 text-slate-350 hover:text-white transition-all active:scale-95 shadow-md border border-slate-700 cursor-pointer flex items-center justify-center h-8 w-8"
-              title="Cerrar Sesión"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
+            
+            {(currentUser || isCustomerView) && (
+              <button
+                onClick={handleLogout}
+                className="rounded-full bg-slate-800 p-1.5 sm:p-2 text-slate-350 hover:text-white transition-all active:scale-95 shadow-md border border-slate-700 cursor-pointer flex items-center justify-center h-7 w-7 sm:h-8 sm:w-8"
+                title="Cerrar Sesión"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       {/* MENU HAMBURGUESA / SIDEBAR DRAWER DEL ADMINISTRADOR */}
-      {isAdmin && menuOpen && (
+      {!isCustomerView && isAdmin && menuOpen && (
         <div className="fixed inset-0 z-50 flex animate-fade-in">
           {/* Backdrop Blur Overlay */}
           <div 
@@ -562,7 +634,7 @@ export function Navbar() {
           ></div>
 
           {/* Sliding Panel */}
-          <div className="fixed inset-y-0 left-0 w-80 bg-slate-950 border-r border-slate-850 p-6 flex flex-col space-y-6 shadow-2xl z-50 transform transition-transform duration-300 translate-x-0">
+          <div className="fixed inset-y-0 left-0 w-[280px] sm:w-80 bg-slate-950 border-r border-slate-850 p-6 flex flex-col space-y-6 shadow-2xl z-50 transform transition-transform duration-300 translate-x-0">
             {/* Header: Brand & Close */}
             <div className="flex items-center justify-between border-b border-slate-900 pb-4">
               <div className="flex items-center gap-2.5">
@@ -570,10 +642,10 @@ export function Navbar() {
                   className="h-8 w-8 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-lg"
                   style={{ backgroundColor: activeColor }}
                 >
-                  {saasConfig?.client_name?.[0] || "L"}
+                  {isMasterSite ? "S" : (saasConfig?.client_name?.[0] || "L")}
                 </div>
                 <span className="text-lg font-bold tracking-tight text-slate-100">
-                  {saasConfig?.client_name || "La Paletixa"}
+                  {isMasterSite ? "SaaS Plataforma" : (saasConfig?.client_name || "La Paletixa")}
                 </span>
               </div>
               
@@ -600,7 +672,7 @@ export function Navbar() {
             </div>
 
             {/* Navigation List */}
-            <nav className="flex-1 flex flex-col space-y-2 overflow-y-auto">
+            <nav className="menu-nav flex-1 flex flex-col space-y-2 overflow-y-auto">
               <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1 px-2">Módulos del Sistema</span>
               
               {/* Enlace 1: Dashboard General */}
@@ -618,165 +690,210 @@ export function Navbar() {
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                 </svg>
-                <span>Panel Operativo</span>
+                <span>{isMasterSite ? "Consola de Control" : "Panel Operativo"}</span>
               </button>
 
-              {/* Enlace 2: Punto de Venta (POS) */}
-              {saasConfig?.features?.pos && (
-                <button
-                  onClick={() => {
-                    router.push("/pos");
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                    isPosPage 
-                      ? "text-white bg-slate-900 border border-slate-850" 
-                      : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                  }`}
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  <span>Punto de Venta</span>
-                </button>
+              {/* Enlaces de módulos para inquilinos */}
+              {!isMasterSite && (
+                <>
+                  {/* Enlace 2: Punto de Venta (POS) */}
+                  {saasConfig?.features?.pos && (saasConfig?.features?.products !== false) && (
+                    <button
+                      onClick={() => {
+                        router.push("/pos");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        isPosPage 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                      <span>Punto de Venta</span>
+                    </button>
+                  )}
+     
+                  {/* Enlace 3: Control de Producción */}
+                  {saasConfig?.features?.production && (saasConfig?.features?.products !== false) && (
+                    <button
+                      onClick={() => {
+                        router.push("/produccion");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        isProduccionPage 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                      </svg>
+                      <span>Control de Planta</span>
+                    </button>
+                  )}
+     
+                  {/* Enlace 4: Logística de Despacho */}
+                  {saasConfig?.features?.logistics && (saasConfig?.features?.products !== false) && (
+                    <button
+                      onClick={() => {
+                        router.push("/logistica");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        isLogisticaPage 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                      </svg>
+                      <span>Logística de Traspaso</span>
+                    </button>
+                  )}
+     
+                  {/* Enlace 5: Reserva de Eventos */}
+                  {saasConfig?.features?.reservations && (
+                    <button
+                      onClick={() => {
+                        router.push("/reservas");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        pathname === "/reservas" 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <span>Reserva de Eventos</span>
+                    </button>
+                  )}
+     
+                  {/* Enlace 6: Venta Mayorista (Puntos Fijos) */}
+                  {saasConfig?.features?.wholesale && (saasConfig?.features?.products !== false) && (
+                    <button
+                      onClick={() => {
+                        router.push("/mayoristas");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        pathname === "/mayoristas" 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                      </svg>
+                      <span>Venta Mayorista</span>
+                    </button>
+                  )}
+     
+                  {/* Enlace 7: Gestión de Clientes */}
+                  {saasConfig?.features?.wholesale && (
+                    <button
+                      onClick={() => {
+                        router.push("/clientes");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        pathname === "/clientes" 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                      </svg>
+                      <span>Gestión de Clientes</span>
+                    </button>
+                  )}
+    
+                  {/* Enlace 7.5: Gestión de Servicios */}
+                  {saasConfig?.features?.services && (
+                    <button
+                      onClick={() => {
+                        router.push("/servicios");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        pathname === "/servicios" 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Gestión de Servicios</span>
+                    </button>
+                  )}
+    
+                  {/* Enlace 7.7: Módulo de Compras */}
+                  {saasConfig?.features?.purchasing && isAdmin && (
+                    <button
+                      onClick={() => {
+                        router.push("/compras");
+                        setMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                        isComprasPage 
+                          ? "text-white bg-slate-900 border border-slate-850" 
+                          : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                      }`}
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                      </svg>
+                      <span>Compras</span>
+                    </button>
+                  )}
+    
+                  {/* Enlace 7: Reportes del Administrador */}
+                  <button
+                    onClick={() => {
+                      router.push("/reportes");
+                      setMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                      isReportesPage 
+                        ? "text-white bg-slate-900 border border-slate-850" 
+                        : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                    }`}
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h-2a2 2 0 00-2-2z" />
+                    </svg>
+                    <span>Reportes</span>
+                  </button>
+    
+                  {/* Enlace 8: Configuración del Sistema */}
+                  <button
+                    onClick={() => {
+                      router.push("/configuracion");
+                      setMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
+                      isConfiguracionPage 
+                        ? "text-white bg-slate-900 border border-slate-850" 
+                        : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+                    }`}
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span>Configuración</span>
+                  </button>
+                </>
               )}
-
-              {/* Enlace 3: Control de Producción */}
-              {saasConfig?.features?.production && (
-                <button
-                  onClick={() => {
-                    router.push("/produccion");
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                    isProduccionPage 
-                      ? "text-white bg-slate-900 border border-slate-850" 
-                      : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                  }`}
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                  </svg>
-                  <span>Control de Planta</span>
-                </button>
-              )}
-
-              {/* Enlace 4: Logística de Despacho */}
-              {saasConfig?.features?.logistics && (
-                <button
-                  onClick={() => {
-                    router.push("/logistica");
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                    isLogisticaPage 
-                      ? "text-white bg-slate-900 border border-slate-850" 
-                      : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                  }`}
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                  <span>Logística de Traspaso</span>
-                </button>
-              )}
-
-              {/* Enlace 5: Reserva de Eventos */}
-              {saasConfig?.features?.reservations && (
-                <button
-                  onClick={() => {
-                    router.push("/reservas");
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                    pathname === "/reservas" 
-                      ? "text-white bg-slate-900 border border-slate-850" 
-                      : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                  }`}
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  <span>Reserva de Eventos</span>
-                </button>
-              )}
-
-              {/* Enlace 6: Venta Mayorista (Puntos Fijos) */}
-              {saasConfig?.features?.wholesale && (
-                <button
-                  onClick={() => {
-                    router.push("/puntos-fijos");
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                    pathname === "/puntos-fijos" 
-                      ? "text-white bg-slate-900 border border-slate-850" 
-                      : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                  }`}
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                  </svg>
-                  <span>Venta Mayorista</span>
-                </button>
-              )}
-
-              {/* Enlace 7: Gestión de Clientes */}
-              {saasConfig?.features?.wholesale && (
-                <button
-                  onClick={() => {
-                    router.push("/clientes");
-                    setMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                    pathname === "/clientes" 
-                      ? "text-white bg-slate-900 border border-slate-850" 
-                      : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                  }`}
-                >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
-                  <span>Gestión de Clientes</span>
-                </button>
-              )}
-
-              {/* Enlace 7: Reportes del Administrador */}
-              <button
-                onClick={() => {
-                  router.push("/reportes");
-                  setMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                  isReportesPage 
-                    ? "text-white bg-slate-900 border border-slate-850" 
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                }`}
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h-2a2 2 0 00-2-2z" />
-                </svg>
-                <span>Reportes</span>
-              </button>
-
-              {/* Enlace 8: Configuración del Sistema */}
-              <button
-                onClick={() => {
-                  router.push("/configuracion");
-                  setMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all active:scale-95 cursor-pointer ${
-                  isConfiguracionPage 
-                    ? "text-white bg-slate-900 border border-slate-850" 
-                    : "text-slate-400 hover:text-white hover:bg-slate-900/50"
-                }`}
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span>Configuración</span>
-              </button>
             </nav>
 
             {/* Bottom Section: Logout */}
@@ -794,6 +911,12 @@ export function Navbar() {
           </div>
         </div>
       )}
+
+      <ChatDrawer 
+        isOpen={chatOpen} 
+        onClose={() => setChatOpen(false)} 
+        primaryColor={activeColor} 
+      />
     </>
   );
 }

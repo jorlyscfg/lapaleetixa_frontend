@@ -3,6 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import HomePage from './home_page';
 
+const mockUseFrappeGetCall = vi.fn(() => ({
+  data: null,
+  error: null,
+  mutate: vi.fn(),
+}));
+
 // Mock useRouter
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -24,15 +30,22 @@ vi.mock('frappe-react-sdk', () => ({
     isLoading: mockIsLoading,
     error: null,
   }),
+  useFrappeGetCall: (...args: unknown[]) => mockUseFrappeGetCall(...args),
 }));
 
 // Mock useSaaSConfig variables
-let mockSaasConfig: any = {
+interface MockSaasConfig {
+  client_name: string;
+  colors: { primary: string };
+  features: { pos: boolean; production: boolean };
+}
+
+const mockSaasConfig: MockSaasConfig = {
   client_name: 'La Paletixa Test',
   colors: { primary: '#3498db' },
   features: { pos: true, production: true }
 };
-let mockConfigLoading = false;
+const mockConfigLoading = false;
 
 vi.mock('./providers', () => ({
   useSaaSConfig: () => ({
@@ -59,6 +72,7 @@ global.fetch = vi.fn().mockImplementation(() =>
 describe('HomePage Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseFrappeGetCall.mockClear();
   });
 
   it('renders loader when auth is loading', () => {
@@ -97,5 +111,57 @@ describe('HomePage Component', () => {
     expect(loginButton).toBeInTheDocument();
     expect(screen.getByText('Correo Electrónico')).toBeInTheDocument();
     expect(screen.getByText('Contraseña')).toBeInTheDocument();
+  });
+
+  it('does not request platform admin dashboard on a non-admin master site', async () => {
+    mockCurrentUser = 'admin@example.com';
+    mockIsLoading = false;
+
+    global.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          message: {
+            client_name: 'La Paletixa Test',
+            colors: { primary: '#3498db' },
+            features: { pos: true, production: true }
+          }
+        }),
+      })
+    );
+
+    render(<HomePage />);
+
+    const platformDashboardCall = mockUseFrappeGetCall.mock.calls.find(
+      ([method]) => method === 'paletixa_saas.paletixa_saas.api.get_platform_admin_dashboard'
+    );
+
+    expect(platformDashboardCall?.[2]).toBeNull();
+  });
+
+  it('requests platform admin dashboard for the superadmin account', async () => {
+    mockCurrentUser = 'admin@jegdev.com';
+    mockIsLoading = false;
+
+    global.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          message: {
+            client_name: 'La Paletixa Test',
+            colors: { primary: '#3498db' },
+            features: { pos: true, production: true }
+          }
+        }),
+      })
+    );
+
+    render(<HomePage />);
+
+    const platformDashboardCall = mockUseFrappeGetCall.mock.calls.find(
+      ([method]) => method === 'paletixa_saas.paletixa_saas.api.get_platform_admin_dashboard'
+    );
+
+    expect(platformDashboardCall?.[2]).toBe('platform_admin_dashboard');
   });
 });

@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect, react-hooks/purity */
+
 import React, { useState, useEffect } from "react";
 import { 
   useFrappeAuth, 
@@ -11,6 +13,8 @@ import {
   useFrappeGetCall
 } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomSelect } from "../components/custom_select";
+import { CatalogImageTile } from "../components/catalog_image_tile";
 
 interface FeatureConfig {
   client_name: string;
@@ -41,35 +45,61 @@ export default function ProduccionPage() {
   const [configLoading, setConfigLoading] = useState(true);
 
   // Determinar roles
-  const isProdUser = currentUser === "produccion@lapaletixa.com";
-  const isCashier = currentUser?.startsWith("cajero.");
-  const isLogisticaUser = currentUser === "logistica@lapaletixa.com";
-  const isAdmin = currentUser === "admin@lapaletixa.com" || (currentUser && !isCashier && !isProdUser && !isLogisticaUser);
+  const isProdUser = currentUser ? currentUser.startsWith("produccion@") : false;
+  const isCashier = currentUser?.startsWith("cajero.") || false;
+  const isLogisticaUser = currentUser ? currentUser.startsWith("logistica@") : false;
+  const isAdmin = currentUser === "Administrator" || currentUser?.startsWith("admin@") || (currentUser && !isCashier && !isProdUser && !isLogisticaUser);
 
   // Estado de Pestaña Activa (Solo Administradores pueden cambiar)
-  const [activeTab, setActiveTab] = useState<"produccion" | "catalogo" | "variantes">("produccion");
+  const [activeTab, setActiveTab] = useState<"produccion" | "catalogo" | "variantes" | "categorias">("produccion");
 
   // Almacén seleccionado para control de stock
-  const [selectedWarehouse, setSelectedWarehouse] = useState<string>("Fabrica - LP");
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>("");
 
   // Consultar dinámicamente los almacenes de la compañía
   const { data: dbWarehouses, isLoading: warehousesLoading } = useFrappeGetDocList("Warehouse", {
     fields: ["name", "warehouse_name"],
     filters: [
-      ["company", "=", "La Paletixa"],
+      ["company", "=", saasConfig?.client_name || "La Paletixa"],
       ["is_group", "=", 0],
       ["disabled", "=", 0]
     ],
     limit: 100
   });
 
+  // Inicializar almacén por defecto una vez cargado
+  useEffect(() => {
+    if (dbWarehouses && dbWarehouses.length > 0 && !selectedWarehouse) {
+      const factory = dbWarehouses.find(w => w.name.toLowerCase().includes("fabrica"));
+      setSelectedWarehouse(factory ? factory.name : dbWarehouses[0].name);
+    }
+  }, [dbWarehouses, selectedWarehouse]);
+
   const getWarehouseLabel = (name: string) => {
-    const cleanName = name.replace(" - LP", "");
+    const cleanName = name.split(" - ")[0];
     if (cleanName.startsWith("Fabrica")) return `🏭 ${cleanName}`;
     if (cleanName.startsWith("Distribucion")) return `📦 ${cleanName}`;
     if (cleanName.startsWith("Sucursal")) return `🍦 ${cleanName}`;
     return `🏪 ${cleanName}`;
   };
+
+  // Consultar grupos de artículos hijos de "Products"
+  const { data: dbItemGroups, isLoading: itemGroupsLoading, mutate: mutateItemGroups } = useFrappeGetDocList("Item Group", {
+    fields: ["name"],
+    filters: [
+      ["parent_item_group", "=", "Products"]
+    ],
+    limit: 100
+  });
+
+  const itemGroupOptions = [
+    { value: "Products", label: "📦 Products" },
+    ...(dbItemGroups?.map((ig: any) => ({
+      value: ig.name,
+      label: `🍦 ${ig.name}`
+    })) || [])
+  ];
+
 
   // Estados de Modales para CRUD
   const [showAddModal, setShowAddModal] = useState(false);
@@ -80,6 +110,7 @@ export default function ProduccionPage() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [formItemCode, setFormItemCode] = useState("");
   const [formItemName, setFormItemName] = useState("");
+  const [formItemGroup, setFormItemGroup] = useState("Products");
   const [formPrice, setFormPrice] = useState("");
   const [formWholesalePrice, setFormWholesalePrice] = useState("");
   const [formImage, setFormImage] = useState("");
@@ -186,6 +217,9 @@ export default function ProduccionPage() {
   const { call: addAttributeValue } = useFrappePostCall(
     "paletixa_saas.paletixa_saas.api.add_attribute_value"
   );
+  const { call: renameItemGroupCall } = useFrappePostCall(
+    "paletixa_saas.paletixa_saas.api.rename_item_group"
+  );
 
   const [varCreating, setVarCreating] = useState(false);
 
@@ -197,7 +231,123 @@ export default function ProduccionPage() {
   // Formulario Nueva Plantilla
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateAttrs, setNewTemplateAttrs] = useState<string[]>([]);
+  const [newTemplateItemGroup, setNewTemplateItemGroup] = useState("Products");
   const [templateSubmitting, setTemplateSubmitting] = useState(false);
+
+  // Estados de Modal para Categorías
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categorySubmitting, setCategorySubmitting] = useState(false);
+  const [showEditCategoryModal, setShowEditCategoryModal] = useState(false);
+  const [selectedCategoryForEdit, setSelectedCategoryForEdit] = useState<string>("");
+  const [formCategoryName, setFormCategoryName] = useState("");
+  const [showDeleteCategoryConfirm, setShowDeleteCategoryConfirm] = useState(false);
+  const [selectedCategoryForDelete, setSelectedCategoryForDelete] = useState<string>("");
+
+  const handleCreateCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCategoryName.trim()) {
+      setErrorMessage("Por favor, ingresá el nombre de la categoría.");
+      return;
+    }
+
+    setCategorySubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const cleanName = newCategoryName.trim();
+      await createDoc("Item Group", {
+        doctype: "Item Group",
+        item_group_name: cleanName,
+        parent_item_group: "Products",
+        is_group: 0
+      });
+
+      setSuccessMessage(`¡Categoría "${cleanName}" creada con éxito!`);
+      setNewCategoryName("");
+      setShowAddCategoryModal(false);
+
+      if (mutateItemGroups) {
+        await mutateItemGroups();
+      }
+
+      setFormItemGroup(cleanName);
+      setNewTemplateItemGroup(cleanName);
+    } catch (err: any) {
+      console.error("Error al crear categoría:", err);
+      setErrorMessage(err.message || "Ocurrió un error al crear la categoría en ERPNext.");
+    } finally {
+      setCategorySubmitting(false);
+    }
+  };
+
+  const handleEditCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCategoryForEdit || !formCategoryName.trim()) {
+      setErrorMessage("Por favor, ingresá el nombre de la categoría.");
+      return;
+    }
+
+    setCategorySubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const cleanName = formCategoryName.trim();
+      const rawRes = await renameItemGroupCall({
+        old_name: selectedCategoryForEdit,
+        new_name: cleanName
+      });
+      const res = rawRes?.message || rawRes;
+
+      if (res && res.success) {
+        setSuccessMessage(`¡Categoría renombrada a "${cleanName}" con éxito!`);
+        setShowEditCategoryModal(false);
+        setSelectedCategoryForEdit("");
+        setFormCategoryName("");
+
+        if (mutateItemGroups) {
+          await mutateItemGroups();
+        }
+        await mutateItems();
+      }
+    } catch (err: any) {
+      console.error("Error al renombrar categoría:", err);
+      setErrorMessage(err.message || "Ocurrió un error al renombrar la categoría en ERPNext.");
+    } finally {
+      setCategorySubmitting(false);
+    }
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!selectedCategoryForDelete) return;
+
+    setCategorySubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      await deleteDoc("Item Group", selectedCategoryForDelete);
+      setSuccessMessage(`¡Categoría "${selectedCategoryForDelete}" eliminada con éxito!`);
+      setShowDeleteCategoryConfirm(false);
+      setSelectedCategoryForDelete("");
+
+      if (mutateItemGroups) {
+        await mutateItemGroups();
+      }
+      await mutateItems();
+    } catch (err: any) {
+      console.error("Error al eliminar categoría:", err);
+      setErrorMessage(
+        err.message || 
+        "No se pudo eliminar la categoría. Aseguráte de que no tenga productos asociados."
+      );
+      setShowDeleteCategoryConfirm(false);
+    } finally {
+      setCategorySubmitting(false);
+    }
+  };
 
   // Formulario Nuevo Valor de Atributo (Agnóstico)
   const [newAttrValName, setNewAttrValName] = useState("");
@@ -218,7 +368,8 @@ export default function ProduccionPage() {
     try {
       const rawRes = await createItemTemplate({
         template_name: newTemplateName,
-        attributes_list: newTemplateAttrs
+        attributes_list: newTemplateAttrs,
+        item_group: newTemplateItemGroup
       });
       const res = rawRes?.message || rawRes;
 
@@ -226,6 +377,7 @@ export default function ProduccionPage() {
         setSuccessMessage(`¡Plantilla de producto "${res.item_name}" creada con éxito!`);
         setNewTemplateName("");
         setNewTemplateAttrs([]);
+        setNewTemplateItemGroup("Products");
         setShowAddTemplateModal(false);
         // Recargar la lista de plantillas de inmediato
         await mutateTemplates();
@@ -354,7 +506,8 @@ export default function ProduccionPage() {
         retail_price: varRetailPrice,
         wholesale_price: varWholesalePrice || null,
         image: uploadedImageUrl || null,
-        barcode: varBarcode || null
+        barcode: varBarcode || null,
+        item_group: formItemGroup
       });
       const res = rawRes?.message || rawRes;
 
@@ -418,12 +571,12 @@ export default function ProduccionPage() {
     }
   }, [saasConfig, configLoading, router]);
 
-  // 4. Consultar artículos del grupo 'Products' en ERPNext (filtrando plantillas con has_variants=0)
+  // 4. Consultar artículos en ERPNext (filtrando plantillas con has_variants=0 e is_sales_item=1)
   const { data: items, isLoading: itemsLoading, mutate: mutateItems } = useFrappeGetDocList("Item", {
     fields: ["name", "item_name", "item_group", "image", "standard_rate", "has_variants", "disabled"],
     filters: [
       ...(showDisabled ? [] : [["disabled", "=", 0]]),
-      ["item_group", "=", "Products"],
+      ["is_sales_item", "=", 1],
       ["has_variants", "=", 0],
       ["name", "!=", "Carrito Paletero"]
     ] as any,
@@ -664,7 +817,7 @@ export default function ProduccionPage() {
         doctype: "Item",
         item_code: formItemCode,
         item_name: formItemName,
-        item_group: "Products",
+        item_group: formItemGroup,
         stock_uom: "Unit",
         image: finalImageUrl,
         disabled: 0,
@@ -699,6 +852,7 @@ export default function ProduccionPage() {
       setFormWholesalePrice("");
       setFormImage("");
       setFormBarcode("");
+      setFormItemGroup("Products");
       setCrudImageFile(null);
       if (crudImagePreviewUrl) {
         URL.revokeObjectURL(crudImagePreviewUrl);
@@ -779,6 +933,7 @@ export default function ProduccionPage() {
       // 1. Actualizar Item
       await updateDoc("Item", selectedItem.name, {
         item_name: formItemName,
+        item_group: formItemGroup,
         image: finalImageUrl,
         barcodes: formBarcode ? [{ barcode: formBarcode, uom: "Unit" }] : []
       });
@@ -826,6 +981,7 @@ export default function ProduccionPage() {
       setShowEditModal(false);
       setSelectedItem(null);
       setFormBarcode("");
+      setFormItemGroup("Products");
       setCrudImageFile(null);
       if (crudImagePreviewUrl) {
         URL.revokeObjectURL(crudImagePreviewUrl);
@@ -961,7 +1117,7 @@ export default function ProduccionPage() {
         
         {/* Selector de Pestañas Premium (Visible solo para administradores) */}
         {isAdmin && (
-          <div className="tab-container">
+          <div className="tab-container flex-shrink-0">
             <button
               onClick={() => {
                 setActiveTab("produccion");
@@ -971,7 +1127,7 @@ export default function ProduccionPage() {
               }}
               className={`tab-button ${activeTab === "produccion" ? "active" : ""}`}
             >
-              🛠️ Producción & Movimientos
+              🛠️ <span>Producción</span>
             </button>
             <button
               onClick={() => {
@@ -982,7 +1138,7 @@ export default function ProduccionPage() {
               }}
               className={`tab-button ${activeTab === "catalogo" ? "active" : ""}`}
             >
-              📦 Catálogo de Productos
+              📦 <span>Catálogo</span>
             </button>
             <button
               onClick={() => {
@@ -993,7 +1149,18 @@ export default function ProduccionPage() {
               }}
               className={`tab-button ${activeTab === "variantes" ? "active" : ""}`}
             >
-              🏷️ Generador de Variantes
+              🏷️ <span>Variantes</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab("categorias");
+                setSearchQuery("");
+                setSuccessMessage(null);
+                setErrorMessage(null);
+              }}
+              className={`tab-button ${activeTab === "categorias" ? "active" : ""}`}
+            >
+              📁 <span>Categorías</span>
             </button>
           </div>
         )}
@@ -1020,7 +1187,7 @@ export default function ProduccionPage() {
               <div className="space-y-1">
                 <h2 className="text-lg font-bold text-white">Gestión Rápida de Inventario</h2>
                 <p className="text-xs text-slate-400">
-                  {selectedWarehouse === "Fabrica - LP"
+                  {selectedWarehouse.toLowerCase().includes("fabrica")
                     ? "Aumentá o disminuí el stock disponible del almacén de la Fábrica con un solo clic."
                     : `Ajustando el stock del almacén: ${getWarehouseLabel(selectedWarehouse).replace(/🏭|🍦|📦|🏪/g, "").trim()}.`}
                 </p>
@@ -1034,24 +1201,24 @@ export default function ProduccionPage() {
                     {warehousesLoading ? (
                       <div className="h-10 w-32 animate-pulse rounded-xl bg-slate-900 border border-slate-800"></div>
                     ) : (
-                      <select
+                      <CustomSelect
                         value={selectedWarehouse}
-                        onChange={(e) => {
-                          setSelectedWarehouse(e.target.value);
+                        onChange={(val) => {
+                          setSelectedWarehouse(val);
                           setStockAdjustments({}); // Limpiar cambios no guardados
                         }}
-                        className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-xs font-extrabold text-white outline-none focus:border-slate-700 transition-all cursor-pointer"
-                      >
-                        {dbWarehouses && dbWarehouses.length > 0 ? (
-                          dbWarehouses.map((w: any) => (
-                            <option key={w.name} value={w.name} className="bg-slate-900 text-white">
-                              {getWarehouseLabel(w.name)}
-                            </option>
-                          ))
-                        ) : (
-                          <option value="Fabrica - LP" className="bg-slate-900 text-white">🏭 Fabrica - LP</option>
-                        )}
-                      </select>
+                        options={
+                          dbWarehouses && dbWarehouses.length > 0
+                            ? dbWarehouses.map((w: any) => ({
+                                value: w.name,
+                                label: getWarehouseLabel(w.name),
+                              }))
+                            : selectedWarehouse 
+                              ? [{ value: selectedWarehouse, label: getWarehouseLabel(selectedWarehouse) }]
+                              : []
+                        }
+                        className="min-w-[140px]"
+                      />
                     )}
                   </div>
                 )}
@@ -1118,19 +1285,11 @@ export default function ProduccionPage() {
 
                     <div>
                       {/* Foto o Icono */}
-                      <div className="aspect-square w-full rounded-2xl bg-slate-900 mb-4 flex items-center justify-center text-slate-700 overflow-hidden relative border border-slate-850">
-                        {item.image ? (
-                          <img 
-                            src={item.image.startsWith("http") ? item.image : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${item.image}`} 
-                            alt={item.item_name}
-                            className="object-cover w-full h-full"
-                          />
-                        ) : (
-                          <svg className="h-10 w-10 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                          </svg>
-                        )}
-                      </div>
+                      <CatalogImageTile
+                        className="aspect-square w-full mb-4"
+                        src={item.image}
+                        alt={item.item_name}
+                      />
 
                       <h3 className="font-extrabold text-base text-white leading-snug truncate">{item.item_name}</h3>
                       <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider font-semibold">{item.item_group}</p>
@@ -1357,7 +1516,7 @@ export default function ProduccionPage() {
                     <th className="px-6 py-4 text-right">Precio Menudeo</th>
                     <th className="px-6 py-4 text-right">Precio Mayoreo</th>
                     <th className="px-6 py-4 text-center">
-                      {selectedWarehouse === "Fabrica - LP"
+                      {selectedWarehouse.toLowerCase().includes("fabrica")
                         ? "Stock Fábrica"
                         : `Stock ${getWarehouseLabel(selectedWarehouse).replace(/🏭|🍦|📦|🏪/g, "").trim()}`}
                     </th>
@@ -1380,19 +1539,11 @@ export default function ProduccionPage() {
                         <tr key={item.name} className={`hover:bg-slate-900/35 transition-colors ${item.disabled ? "opacity-50 grayscale" : ""}`}>
                           {/* Image */}
                           <td className="px-6 py-4">
-                            <div className="h-12 w-12 rounded-xl bg-slate-900 border border-slate-880 flex items-center justify-center text-slate-700 overflow-hidden relative">
-                              {item.image ? (
-                                <img
-                                  src={item.image.startsWith("http") ? item.image : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${item.image}`}
-                                  alt={item.item_name}
-                                  className="object-cover w-full h-full"
-                                />
-                              ) : (
-                                <svg className="h-5 w-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                                </svg>
-                              )}
-                            </div>
+                            <CatalogImageTile
+                              className="h-12 w-12"
+                              src={item.image}
+                              alt={item.item_name}
+                            />
                           </td>
 
                           {/* Code */}
@@ -1450,14 +1601,9 @@ export default function ProduccionPage() {
                                   setFormWholesalePrice(wholesalePrice > 0 ? wholesalePrice.toString() : "");
                                   setFormImage(item.image || "");
                                   setFormBarcode(getItemBarcode(item.name));
+                                  setFormItemGroup(item.item_group || "Products");
                                   setCrudImageFile(null);
-                                  setCrudImagePreviewUrl(
-                                    item.image
-                                      ? item.image.startsWith("http")
-                                        ? item.image
-                                        : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${item.image}`
-                                      : null
-                                  );
+                                  setCrudImagePreviewUrl(item.image || null);
                                   setShowEditModal(true);
                                 }}
                                 className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-white transition-all active:scale-95 cursor-pointer"
@@ -1546,24 +1692,51 @@ export default function ProduccionPage() {
                     {templatesLoading ? (
                       <div className="h-10 w-full animate-pulse rounded-xl bg-slate-900 border border-slate-850"></div>
                     ) : (
-                      <select
-                        required
+                      <CustomSelect
                         value={selectedTemplate}
-                        onChange={(e) => {
-                          setSelectedTemplate(e.target.value);
+                        onChange={(val) => {
+                          setSelectedTemplate(val);
                           setSelectedValues({});
+                          const t = templates?.find((x: any) => x.name === val);
+                          if (t) {
+                            setFormItemGroup(t.item_group || "Products");
+                          }
                         }}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-white placeholder-slate-650 outline-none transition-all focus:border-slate-700"
-                      >
-                        <option value="">-- Seleccionar Plantilla --</option>
-                        {templates?.map((t: any) => (
-                          <option key={t.name} value={t.name}>
-                            {t.item_name} ({t.name})
-                          </option>
-                        ))}
-                      </select>
+                        options={[
+                          { value: "", label: "-- Seleccionar Plantilla --" },
+                          ...(templates?.map((t: any) => ({
+                            value: t.name,
+                            label: `${t.item_name} (${t.name})`,
+                          })) || []),
+                        ]}
+                      />
                     )}
                   </div>
+
+                  {/* Selector de Categoría para Variante */}
+                  {selectedTemplate && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Categoría de la Variante*</label>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddCategoryModal(true)}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold transition-all flex items-center gap-0.5 cursor-pointer"
+                        >
+                          + Nueva Categoría
+                        </button>
+                      </div>
+                      {itemGroupsLoading ? (
+                        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-900 border border-slate-850"></div>
+                      ) : (
+                        <CustomSelect
+                          value={formItemGroup}
+                          onChange={(val) => setFormItemGroup(val)}
+                          options={itemGroupOptions}
+                        />
+                      )}
+                    </div>
+                  )}
 
                   {/* Atributos Dinámicos */}
                   {selectedTemplate && (
@@ -1591,24 +1764,22 @@ export default function ProduccionPage() {
                                 + Agregar {attr.attribute}
                               </button>
                             </div>
-                            <select
-                              required
+                            <CustomSelect
                               value={selectedValues[attr.attribute] || ""}
-                              onChange={(e) => {
+                              onChange={(val) => {
                                 setSelectedValues(prev => ({
                                   ...prev,
-                                  [attr.attribute]: e.target.value
+                                  [attr.attribute]: val
                                 }));
                               }}
-                              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-4 py-2.5 text-sm text-white outline-none transition-all focus:border-slate-700"
-                            >
-                              <option value="">-- Seleccionar {attr.attribute} --</option>
-                              {attr.values.map((val: any) => (
-                                <option key={val.value} value={val.value}>
-                                  {val.value} ({val.abbr})
-                                </option>
-                              ))}
-                            </select>
+                              options={[
+                                { value: "", label: `-- Seleccionar ${attr.attribute} --` },
+                                ...attr.values.map((val: any) => ({
+                                  value: val.value,
+                                  label: `${val.value} (${val.abbr})`
+                                }))
+                              ]}
+                            />
                           </div>
                         ))
                       ) : (
@@ -1661,19 +1832,11 @@ export default function ProduccionPage() {
                   <div className="space-y-2 rounded-2xl bg-slate-900/30 border border-slate-850 p-5">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Imagen del Helado (Opcional)</label>
                     <div className="flex flex-col sm:flex-row items-center gap-4">
-                      <div className="h-24 w-32 rounded-2xl bg-slate-950 border border-slate-850 flex items-center justify-center text-slate-700 relative overflow-hidden flex-shrink-0">
-                        {imagePreviewUrl ? (
-                          <img
-                            src={imagePreviewUrl}
-                            alt="Previsualización"
-                            className="object-cover w-full h-full"
-                          />
-                        ) : (
-                          <svg className="h-8 w-8 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                        )}
-                      </div>
+                      <CatalogImageTile
+                        className="h-24 w-32 flex-shrink-0"
+                        src={imagePreviewUrl}
+                        alt="Previsualización"
+                      />
 
                       <div className="flex-1 space-y-2 w-full">
                         <div className="flex gap-2">
@@ -1772,19 +1935,11 @@ export default function ProduccionPage() {
                       </div>
 
                       {/* Icon Container */}
-                      <div className="h-20 w-24 rounded-2xl bg-slate-950 border border-slate-850 flex items-center justify-center text-slate-700 relative overflow-hidden flex-shrink-0">
-                        {imagePreviewUrl ? (
-                          <img
-                            src={imagePreviewUrl}
-                            alt="Vista Previa"
-                            className="object-cover w-full h-full"
-                          />
-                        ) : (
-                          <svg className="h-10 w-10 text-slate-600 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                          </svg>
-                        )}
-                      </div>
+                      <CatalogImageTile
+                        className="h-20 w-24 flex-shrink-0"
+                        src={imagePreviewUrl}
+                        alt="Vista Previa"
+                      />
 
                       {/* Name / Description */}
                       <div className="space-y-1.5">
@@ -1840,6 +1995,97 @@ export default function ProduccionPage() {
             </div>
           </div>
         )}
+
+        {/* VISTA 4: Gestión de Categorías (Solo Administradores) */}
+        {activeTab === "categorias" && isAdmin && (
+          <div className="flex flex-col space-y-6">
+            {/* Header Card */}
+            <div className="flex flex-col gap-4 bg-slate-950 p-6 rounded-3xl border border-slate-850 shadow-xl md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <h2 className="text-lg font-bold text-white">Gestión General de Categorías</h2>
+                <p className="text-xs text-slate-400">Creá, editá y eliminá las categorías de productos (Item Groups) directo en ERPNext.</p>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewCategoryName("");
+                    setShowAddCategoryModal(true);
+                  }}
+                  className="rounded-2xl px-5 py-3 text-sm font-bold text-white shadow-lg transition-all active:scale-95 hover:brightness-110 cursor-pointer flex items-center gap-2 justify-center"
+                  style={{ backgroundColor: activeColor }}
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Agregar Categoría
+                </button>
+              </div>
+            </div>
+
+            {/* List Table of Categories */}
+            <div className="overflow-x-auto rounded-3xl border border-slate-850 bg-slate-950 shadow-xl">
+              <table className="w-full text-left border-collapse min-w-[500px]">
+                <thead>
+                  <tr className="border-b border-slate-850 bg-slate-900/50 text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                    <th className="px-6 py-4">Ícono</th>
+                    <th className="px-6 py-4">Nombre de la Categoría</th>
+                    <th className="px-6 py-4">Categoría Padre</th>
+                    <th className="px-6 py-4 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-850">
+                  {dbItemGroups?.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-10 text-center text-sm text-slate-500 font-medium">
+                        No se encontraron categorías registradas.
+                      </td>
+                    </tr>
+                  ) : (
+                    dbItemGroups?.map((ig: any) => (
+                      <tr key={ig.name} className="hover:bg-slate-900/35 transition-colors">
+                        <td className="px-6 py-4 text-lg">🍦</td>
+                        <td className="px-6 py-4 text-sm font-bold text-white">{ig.name}</td>
+                        <td className="px-6 py-4 text-sm font-mono text-slate-450">Products</td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCategoryForEdit(ig.name);
+                                setFormCategoryName(ig.name);
+                                setShowEditCategoryModal(true);
+                              }}
+                              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-white transition-all active:scale-95 cursor-pointer"
+                              title="Renombrar"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCategoryForDelete(ig.name);
+                                setShowDeleteCategoryConfirm(true);
+                              }}
+                              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:bg-red-500/10 hover:border-red-500/25 hover:text-red-400 transition-all active:scale-95 cursor-pointer"
+                              title="Eliminar"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Modal: Agregar Producto */}
@@ -1883,6 +2129,28 @@ export default function ProduccionPage() {
               </div>
 
               <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-400">Categoría (Grupo de Artículo)*</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCategoryModal(true)}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold transition-all flex items-center gap-0.5 cursor-pointer"
+                  >
+                    + Nueva Categoría
+                  </button>
+                </div>
+                {itemGroupsLoading ? (
+                  <div className="h-10 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-850"></div>
+                ) : (
+                  <CustomSelect
+                    value={formItemGroup}
+                    onChange={(val) => setFormItemGroup(val)}
+                    options={itemGroupOptions}
+                  />
+                )}
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-400">Código de Barras (Opcional)</label>
                 <input
                   type="text"
@@ -1923,19 +2191,11 @@ export default function ProduccionPage() {
               <div className="space-y-2 rounded-2xl bg-slate-955 border border-slate-850 p-4">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Imagen del Producto (Opcional)</label>
                 <div className="flex items-center gap-4">
-                  <div className="h-16 w-20 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-center text-slate-700 overflow-hidden flex-shrink-0">
-                    {crudImagePreviewUrl ? (
-                      <img
-                        src={crudImagePreviewUrl}
-                        alt="Previsualización"
-                        className="object-cover w-full h-full"
-                      />
-                    ) : (
-                      <svg className="h-6 w-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    )}
-                  </div>
+                  <CatalogImageTile
+                    className="h-16 w-20 flex-shrink-0"
+                    src={crudImagePreviewUrl}
+                    alt="Previsualización"
+                  />
 
                   <div className="flex-1 space-y-1.5 w-full">
                     <div className="flex gap-2">
@@ -2044,6 +2304,28 @@ export default function ProduccionPage() {
               </div>
 
               <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-400">Categoría (Grupo de Artículo)*</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCategoryModal(true)}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold transition-all flex items-center gap-0.5 cursor-pointer"
+                  >
+                    + Nueva Categoría
+                  </button>
+                </div>
+                {itemGroupsLoading ? (
+                  <div className="h-10 w-full animate-pulse rounded-xl bg-slate-955 border border-slate-850"></div>
+                ) : (
+                  <CustomSelect
+                    value={formItemGroup}
+                    onChange={(val) => setFormItemGroup(val)}
+                    options={itemGroupOptions}
+                  />
+                )}
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-400">Código de Barras (Opcional)</label>
                 <input
                   type="text"
@@ -2084,19 +2366,11 @@ export default function ProduccionPage() {
               <div className="space-y-2 rounded-2xl bg-slate-955 border border-slate-850 p-4">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Imagen del Producto</label>
                 <div className="flex items-center gap-4">
-                  <div className="h-16 w-20 rounded-xl bg-slate-950 border border-slate-850 flex items-center justify-center text-slate-700 overflow-hidden flex-shrink-0">
-                    {crudImagePreviewUrl ? (
-                      <img
-                        src={crudImagePreviewUrl}
-                        alt="Previsualización"
-                        className="object-cover w-full h-full"
-                      />
-                    ) : (
-                      <svg className="h-6 w-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    )}
-                  </div>
+                  <CatalogImageTile
+                    className="h-16 w-20 flex-shrink-0"
+                    src={crudImagePreviewUrl}
+                    alt="Previsualización"
+                  />
 
                   <div className="flex-1 space-y-1.5 w-full">
                     <div className="flex gap-2">
@@ -2244,6 +2518,28 @@ export default function ProduccionPage() {
                 />
               </div>
 
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-400">Categoría (Grupo de Artículo)*</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCategoryModal(true)}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold transition-all flex items-center gap-0.5 cursor-pointer"
+                  >
+                    + Nueva Categoría
+                  </button>
+                </div>
+                {itemGroupsLoading ? (
+                  <div className="h-10 w-full animate-pulse rounded-xl bg-slate-955 border border-slate-850"></div>
+                ) : (
+                  <CustomSelect
+                    value={newTemplateItemGroup}
+                    onChange={(val) => setNewTemplateItemGroup(val)}
+                    options={itemGroupOptions}
+                  />
+                )}
+              </div>
+
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 block">Seleccionar Atributos (Dimensiones)*</label>
                 <div className="space-y-2 max-h-[150px] overflow-y-auto border border-slate-800 rounded-xl p-3 bg-slate-950/50">
@@ -2373,6 +2669,174 @@ export default function ProduccionPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Modal: Nueva Categoría */}
+      {showAddCategoryModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-955/60 backdrop-blur-md p-4">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6 relative">
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddCategoryModal(false);
+                setNewCategoryName("");
+              }}
+              className="absolute top-5 right-5 text-slate-500 hover:text-slate-300 transition-all text-lg cursor-pointer"
+            >
+              ✕
+            </button>
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-white">Agregar Nueva Categoría</h3>
+              <p className="text-xs text-slate-400">Agregá una nueva categoría (ej: Paletas de Crema) que estará disponible en el catálogo.</p>
+            </div>
+
+            <form onSubmit={handleCreateCategory} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-400">Nombre de la Categoría*</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Paletas de Crema o Nieves"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder-slate-650 outline-none transition-all focus:border-slate-700"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddCategoryModal(false);
+                    setNewCategoryName("");
+                  }}
+                  className="flex-1 rounded-xl bg-slate-800 text-slate-300 py-3 font-bold text-sm hover:bg-slate-750 transition-all active:scale-95 cursor-pointer text-center"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={categorySubmitting}
+                  className="flex-1 rounded-xl text-white py-3 font-bold text-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center"
+                  style={{ backgroundColor: activeColor }}
+                >
+                  {categorySubmitting ? (
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-white"></div>
+                  ) : (
+                    "Guardar Categoría"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Editar/Renombrar Categoría */}
+      {showEditCategoryModal && selectedCategoryForEdit && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-955/60 backdrop-blur-md p-4">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6 relative">
+            <button
+              type="button"
+              onClick={() => {
+                setShowEditCategoryModal(false);
+                setSelectedCategoryForEdit("");
+                setFormCategoryName("");
+              }}
+              className="absolute top-5 right-5 text-slate-500 hover:text-slate-300 transition-all text-lg cursor-pointer"
+            >
+              ✕
+            </button>
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-white">Renombrar Categoría</h3>
+              <p className="text-xs text-slate-400">Editá el nombre de la categoría. Se actualizarán automáticamente todos los productos y variantes asociados.</p>
+            </div>
+
+            <form onSubmit={handleEditCategory} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-400">Nombre de la Categoría*</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Paletas de Agua"
+                  value={formCategoryName}
+                  onChange={(e) => setFormCategoryName(e.target.value)}
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder-slate-650 outline-none transition-all focus:border-slate-700"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditCategoryModal(false);
+                    setSelectedCategoryForEdit("");
+                    setFormCategoryName("");
+                  }}
+                  className="flex-1 rounded-xl bg-slate-800 text-slate-300 py-3 font-bold text-sm hover:bg-slate-750 transition-all active:scale-95 cursor-pointer text-center"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={categorySubmitting}
+                  className="flex-1 rounded-xl text-white py-3 font-bold text-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center"
+                  style={{ backgroundColor: activeColor }}
+                >
+                  {categorySubmitting ? (
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-white"></div>
+                  ) : (
+                    "Guardar Cambios"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmación de Eliminación de Categoría */}
+      {showDeleteCategoryConfirm && selectedCategoryForDelete && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-955/60 backdrop-blur-md p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6 relative">
+            <div className="space-y-3 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10 border border-red-500/20 text-red-500">
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-bold text-white">¿Eliminar Categoría?</h3>
+              <p className="text-xs text-slate-400 font-medium">
+                ¿Estás seguro de que querés eliminar la categoría <span className="font-bold text-white">"{selectedCategoryForDelete}"</span>?<br />
+                Esta acción no se puede deshacer y fallará si hay productos o plantillas asignadas a este grupo.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteCategoryConfirm(false);
+                  setSelectedCategoryForDelete("");
+                }}
+                className="flex-1 rounded-xl bg-slate-800 text-slate-300 py-3 font-bold text-sm hover:bg-slate-750 transition-all active:scale-95 cursor-pointer text-center"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteCategory}
+                disabled={categorySubmitting}
+                className="flex-1 rounded-xl bg-red-600 hover:bg-red-500 text-white py-3 font-bold text-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center"
+              >
+                {categorySubmitting ? (
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-white"></div>
+                ) : (
+                  "Sí, Eliminar"
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

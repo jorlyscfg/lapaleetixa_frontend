@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { CustomSelect } from "../components/custom_select";
 
 interface OrderItem {
   item_code: string;
@@ -29,7 +30,7 @@ interface EventWarehouse {
 
 interface AdminEventsPanelProps {
   primaryColor: string;
-  callFrappeAPI: (method: string, args?: any) => Promise<any>;
+  callFrappeAPI: (method: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
 export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminEventsPanelProps) {
@@ -54,35 +55,40 @@ export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminE
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [bookingToCancel, setBookingToCancel] = useState<EventBooking | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const pendingBookings = await callFrappeAPI("get_pending_event_bookings");
+      const pendingBookings = (await callFrappeAPI("get_pending_event_bookings")) as EventBooking[];
       setBookings(pendingBookings || []);
 
-      const activeWarehouses = await callFrappeAPI("get_event_warehouses");
+      const activeWarehouses = (await callFrappeAPI("get_event_warehouses")) as EventWarehouse[];
       setWarehouses(activeWarehouses || []);
 
-      // Inicializar almacenes seleccionados con el por defecto "Distribucion - LP"
+      // Inicializar almacenes seleccionados con el por defecto
       const initialWhs: Record<string, string> = {};
       if (pendingBookings) {
+        const defaultWh = (activeWarehouses && activeWarehouses.length > 0)
+          ? (activeWarehouses.find((wh: EventWarehouse) => wh.name.toLowerCase().includes("distribucion"))?.name || activeWarehouses[0].name)
+          : "";
         pendingBookings.forEach((b: EventBooking) => {
-          initialWhs[b.name] = "Distribucion - LP";
+          initialWhs[b.name] = defaultWh;
         });
       }
       setSelectedWarehouses(initialWhs);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(err);
-      setErrorMessage(err.message || "Error al cargar los datos del panel de administración.");
+      setErrorMessage(message || "Error al cargar los datos del panel de administración.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [callFrappeAPI]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   const handleWarehouseChange = (bookingName: string, warehouseName: string) => {
     setSelectedWarehouses((prev) => ({
@@ -100,28 +106,30 @@ export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminE
 
   const handleCompleteBooking = async () => {
     if (!selectedBooking) return;
-    const chosenWarehouse = selectedWarehouses[selectedBooking.name] || "Distribucion - LP";
+    const defaultWh = warehouses.find((wh) => wh.name.toLowerCase().includes("distribucion"))?.name || warehouses[0]?.name || "";
+    const chosenWarehouse = selectedWarehouses[selectedBooking.name] || defaultWh;
     setProcessingBooking(selectedBooking.name);
     setShowConfirmModal(false);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      const res = await callFrappeAPI("complete_event_booking", {
+      const res = (await callFrappeAPI("complete_event_booking", {
         sales_order_name: selectedBooking.name,
         register_payment: registerPayment ? 1 : 0,
         payment_mode: paymentMode,
         warehouse: chosenWarehouse
-      });
+      })) as { sales_invoice: string; advance_paid: number };
 
       setSuccessMessage(
         `¡Reserva ${selectedBooking.name} completada y facturada con éxito! Factura: ${res.sales_invoice}. ` +
         (res.advance_paid > 0 ? `Cobro de saldo registrado (${res.advance_paid.toFixed(2)} MXN).` : "Factura registrada a crédito.")
       );
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(err);
-      setErrorMessage(err.message || `Error al completar la reserva de evento ${selectedBooking.name}.`);
+      setErrorMessage(message || `Error al completar la reserva de evento ${selectedBooking.name}.`);
     } finally {
       await fetchData();
       setProcessingBooking(null);
@@ -143,9 +151,10 @@ export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminE
 
       setSuccessMessage(`¡Reserva ${bookingToCancel.name} cancelada con éxito y carrito liberado para esa fecha!`);
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(err);
-      setErrorMessage(err.message || `Error al cancelar la reserva ${bookingToCancel.name}.`);
+      setErrorMessage(message || `Error al cancelar la reserva ${bookingToCancel.name}.`);
     } finally {
       await fetchData();
       setProcessingBooking(null);
@@ -214,7 +223,8 @@ export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminE
             {bookings.map((booking) => {
               const isExpanded = expandedBooking === booking.name;
               const isProcessing = processingBooking === booking.name;
-              const currentWh = selectedWarehouses[booking.name] || "Distribucion - LP";
+              const defaultWh = warehouses.find((wh) => wh.name.toLowerCase().includes("distribucion"))?.name || warehouses[0]?.name || "";
+              const currentWh = selectedWarehouses[booking.name] || defaultWh;
               const pendingAmount = booking.grand_total - booking.advance_paid;
 
               return (
@@ -248,21 +258,18 @@ export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminE
 
                     <div className="flex flex-wrap items-center justify-between xl:justify-end gap-6">
                       
-                      <div className="text-left" onClick={(e) => e.stopPropagation()}>
+                      <div className="text-left w-44 animate-fade-in" onClick={(e) => e.stopPropagation()}>
                         <span className="text-[9px] text-slate-455 font-black uppercase tracking-wider block mb-1">
                           Almacén de Stock
                         </span>
-                        <select
+                        <CustomSelect
                           value={currentWh}
-                          onChange={(e) => handleWarehouseChange(booking.name, e.target.value)}
-                          className="bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl px-2 py-1 text-xs text-slate-800 dark:text-white font-bold focus:outline-none focus:border-sky-500 cursor-pointer"
-                        >
-                          {warehouses.map((wh) => (
-                            <option key={wh.name} value={wh.name}>
-                              {wh.warehouse_name}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(val) => handleWarehouseChange(booking.name, val)}
+                          options={warehouses.map((wh) => ({
+                            value: wh.name,
+                            label: wh.warehouse_name
+                          }))}
+                        />
                       </div>
 
                       <div className="text-right">
@@ -386,7 +393,7 @@ export default function AdminEventsPanel({ primaryColor, callFrappeAPI }: AdminE
                 <p className="pt-1.5 border-t border-slate-200 dark:border-slate-850 mt-1.5 text-slate-900 dark:text-white font-black">
                   <strong>Saldo Pendiente:</strong> ${(selectedBooking.grand_total - selectedBooking.advance_paid).toFixed(2)} MXN
                 </p>
-                <p className="text-sky-600 dark:text-sky-400 font-bold"><strong>Almacén de Stock:</strong> {selectedWarehouses[selectedBooking.name] || "Distribucion - LP"}</p>
+                <p className="text-sky-600 dark:text-sky-400 font-bold"><strong>Almacén de Stock:</strong> {selectedWarehouses[selectedBooking.name] || (warehouses.find((wh) => wh.name.toLowerCase().includes("distribucion"))?.name || warehouses[0]?.name || "")}</p>
               </div>
 
               {/* Registro de Cobro de saldo pendiente */}

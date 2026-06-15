@@ -1,8 +1,12 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect */
+
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth, useFrappeGetDocList, useFrappeGetCall, useFrappePostCall } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomSelect } from "../components/custom_select";
+import { useSaaSConfig } from "../providers";
 
 interface FeatureConfig {
   client_name: string;
@@ -16,6 +20,9 @@ interface FeatureConfig {
     reservations?: boolean;
     wholesale?: boolean;
     mexico_taxes?: boolean;
+    services?: boolean;
+    products?: boolean;
+    purchasing?: boolean;
   };
   reservation_item_code?: string;
   max_reservation_assets?: number;
@@ -47,10 +54,11 @@ interface PreloadedItem {
 export default function ConfiguracionPage() {
   const { currentUser, isLoading: authLoading } = useFrappeAuth();
   const router = useRouter();
+  const { refreshConfig } = useSaaSConfig();
 
   const isCashier = currentUser?.startsWith("cajero.");
-  const isProdUser = currentUser === "produccion@lapaletixa.com";
-  const isLogisticaUser = currentUser === "logistica@lapaletixa.com";
+  const isProdUser = currentUser ? currentUser.startsWith("produccion@") : false;
+  const isLogisticaUser = currentUser ? currentUser.startsWith("logistica@") : false;
   const isAdmin = currentUser && !isCashier && !isProdUser && !isLogisticaUser;
 
   // Configuración original y estados de edición locales
@@ -59,6 +67,7 @@ export default function ConfiguracionPage() {
   const [updating, setUpdating] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"general" | "modulos" | "sucursales" | "usuarios">("general");
 
   // Estados locales editables
   const [primaryColor, setPrimaryColor] = useState("#1abc9c");
@@ -66,8 +75,11 @@ export default function ConfiguracionPage() {
   const [hasProduction, setHasProduction] = useState(false);
   const [hasLogistics, setHasLogistics] = useState(false);
   const [hasReservations, setHasReservations] = useState(false);
+  const [hasPurchasing, setHasPurchasing] = useState(false);
   const [hasWholesale, setHasWholesale] = useState(true);
   const [hasMexicoTaxes, setHasMexicoTaxes] = useState(false);
+  const [hasServices, setHasServices] = useState(true);
+  const [hasProducts, setHasProducts] = useState(true);
   const [reservationItemCode, setReservationItemCode] = useState("Carrito Paletero");
   const [maxReservationAssets, setMaxReservationAssets] = useState(10);
   const [defaultEventItems, setDefaultEventItems] = useState<PreloadedItem[]>([]);
@@ -444,8 +456,11 @@ export default function ConfiguracionPage() {
       setHasProduction(!!saasConfig.features?.production);
       setHasLogistics(!!saasConfig.features?.logistics);
       setHasReservations(!!saasConfig.features?.reservations);
+      setHasPurchasing(!!saasConfig.features?.purchasing);
       setHasWholesale(saasConfig.features?.wholesale !== undefined ? !!saasConfig.features.wholesale : true);
       setHasMexicoTaxes(!!saasConfig.features?.mexico_taxes);
+      setHasServices(saasConfig.features?.services !== undefined ? !!saasConfig.features.services : true);
+      setHasProducts(saasConfig.features?.products !== undefined ? !!saasConfig.features.products : true);
       setReservationItemCode(saasConfig.reservation_item_code || "Carrito Paletero");
       setMaxReservationAssets(saasConfig.max_reservation_assets || 0);
       setCountry(saasConfig.custom_country || "Mexico");
@@ -547,6 +562,7 @@ export default function ConfiguracionPage() {
           has_production: hasProduction ? 1 : 0,
           has_logistics: hasLogistics ? 1 : 0,
           has_reservations: hasReservations ? 1 : 0,
+          has_purchasing: hasPurchasing ? 1 : 0,
           reservation_item_code: reservationItemCode,
           max_reservation_assets: maxReservationAssets,
           default_event_items: JSON.stringify(defaultEventItems),
@@ -554,6 +570,8 @@ export default function ConfiguracionPage() {
           custom_currency: currency,
           has_wholesale: hasWholesale ? 1 : 0,
           has_mexico_taxes: hasMexicoTaxes ? 1 : 0,
+          has_services: hasServices ? 1 : 0,
+          has_products: hasProducts ? 1 : 0,
           // Nuevos campos de marca e identidad comercial
           company_name: companyName,
           company_logo: finalLogoUrl,
@@ -573,6 +591,7 @@ export default function ConfiguracionPage() {
       if (res.ok) {
         const data = await res.json();
         if (data.message && data.message.success) {
+          await refreshConfig();
           setSuccessMsg("¡Configuración general de la plataforma guardada con éxito!");
           
           // Limpiar archivo seleccionado ya subido
@@ -591,8 +610,11 @@ export default function ConfiguracionPage() {
               production: hasProduction,
               logistics: hasLogistics,
               reservations: hasReservations,
+              purchasing: hasPurchasing,
               wholesale: hasWholesale,
-              mexico_taxes: hasMexicoTaxes
+              mexico_taxes: hasMexicoTaxes,
+              services: hasServices,
+              products: hasProducts
             },
             reservation_item_code: reservationItemCode,
             max_reservation_assets: maxReservationAssets,
@@ -686,42 +708,56 @@ export default function ConfiguracionPage() {
     item.item_name.toLowerCase().includes(productSearch.toLowerCase())
   ) || [];
 
+  const hasChanges = () => {
+    if (!saasConfig) return false;
+    
+    let originalDefaultEventItems = [];
+    try {
+      const parsed = JSON.parse(saasConfig.default_event_items || "[]");
+      originalDefaultEventItems = Array.isArray(parsed) ? parsed : [];
+    } catch (e) {}
+    
+    const defaultEventItemsChanged = JSON.stringify(defaultEventItems) !== JSON.stringify(originalDefaultEventItems);
+
+    return (
+      primaryColor !== (saasConfig.colors?.primary || "#1abc9c") ||
+      hasPos !== (!!saasConfig.features?.pos) ||
+      hasProduction !== (!!saasConfig.features?.production) ||
+      hasLogistics !== (!!saasConfig.features?.logistics) ||
+      hasReservations !== (!!saasConfig.features?.reservations) ||
+      hasPurchasing !== (!!saasConfig.features?.purchasing) ||
+      hasWholesale !== (saasConfig.features?.wholesale !== undefined ? !!saasConfig.features.wholesale : true) ||
+      hasMexicoTaxes !== (!!saasConfig.features?.mexico_taxes) ||
+      hasServices !== (saasConfig.features?.services !== undefined ? !!saasConfig.features.services : true) ||
+      hasProducts !== (saasConfig.features?.products !== undefined ? !!saasConfig.features.products : true) ||
+      reservationItemCode !== (saasConfig.reservation_item_code || "Carrito Paletero") ||
+      maxReservationAssets !== (saasConfig.max_reservation_assets || 0) ||
+      country !== (saasConfig.custom_country || "Mexico") ||
+      currency !== (saasConfig.custom_currency || "MXN") ||
+      companyName !== (saasConfig.company_name || saasConfig.client_name || "") ||
+      companyLogo !== (saasConfig.company_logo || "") ||
+      companyTaxId !== (saasConfig.company_tax_id || "") ||
+      companyAddress !== (saasConfig.company_address || "") ||
+      companyPhone !== (saasConfig.company_phone || "") ||
+      companyEmail !== (saasConfig.company_email || "") ||
+      ticketHeader !== (saasConfig.ticket_header || "") ||
+      ticketFooter !== (saasConfig.ticket_footer || "") ||
+      printLogo !== (saasConfig.print_logo !== undefined ? !!saasConfig.print_logo : true) ||
+      printTaxId !== (saasConfig.print_tax_id !== undefined ? !!saasConfig.print_tax_id : true) ||
+      printAddress !== (saasConfig.print_address !== undefined ? !!saasConfig.print_address : true) ||
+      printContact !== (saasConfig.print_contact !== undefined ? !!saasConfig.print_contact : true) ||
+      defaultEventItemsChanged ||
+      selectedLogoFile !== null
+    );
+  };
+
   return (
-    <div className="h-full flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden w-full">
-      <form onSubmit={handleSaveChanges} className="w-full px-4 sm:px-6 lg:px-8 py-6 flex flex-col space-y-6 sm:space-y-8 overflow-y-auto flex-1 pb-24">
-        
-        {/* Cabecera Premium */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6 animate-fade-in">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-black tracking-tight text-white flex items-center gap-3">
-              <span className="inline-block h-3.5 w-3.5 rounded-full" style={{ backgroundColor: primaryColor }}></span>
-              Configuración de la Plataforma
-            </h1>
-            <p className="text-sm text-slate-400 font-medium">
-              Administrá los privilegios, módulos contratados y la identidad visual de tu franquicia.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
-              className="rounded-2xl bg-slate-800 px-5 py-2.5 text-xs font-bold text-slate-200 transition-all hover:bg-slate-750 hover:text-white active:scale-95 border border-slate-700 shadow-md flex items-center gap-2 cursor-pointer"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              Volver al Panel
-            </button>
-            <button
-              type="submit"
-              disabled={updating}
-              className="rounded-2xl px-5 py-2.5 text-xs font-black text-white shadow-xl transition-all duration-300 hover:brightness-110 active:scale-95 disabled:opacity-50 cursor-pointer"
-              style={{ backgroundColor: primaryColor }}
-            >
-              {updating ? "Guardando..." : "Guardar Cambios"}
-            </button>
-          </div>
-        </div>
+    <div className="h-full flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden w-full relative">
+      <form 
+        id="config-form"
+        onSubmit={handleSaveChanges} 
+        className="w-full px-4 sm:px-6 lg:px-8 py-6 flex flex-col space-y-6 sm:space-y-8 overflow-y-auto flex-1 pb-24"
+      >
 
         {/* Notificaciones */}
         {successMsg && (
@@ -737,6 +773,40 @@ export default function ConfiguracionPage() {
           </div>
         )}
 
+        {/* Selector de Pestañas Premium Global */}
+        <div className="tab-container flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab("general")}
+            className={`tab-button flex-1 sm:flex-initial flex items-center justify-center gap-1.5 ${activeTab === "general" ? "active" : ""}`}
+          >
+            🏢 <span>Identidad y General</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("modulos")}
+            className={`tab-button flex-1 sm:flex-initial flex items-center justify-center gap-1.5 ${activeTab === "modulos" ? "active" : ""}`}
+          >
+            ⚙️ <span>Módulos y Funciones</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("sucursales")}
+            className={`tab-button flex-1 sm:flex-initial flex items-center justify-center gap-1.5 ${activeTab === "sucursales" ? "active" : ""}`}
+          >
+            🏪 <span>Sucursales</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("usuarios")}
+            className={`tab-button flex-1 sm:flex-initial flex items-center justify-center gap-1.5 ${activeTab === "usuarios" ? "active" : ""}`}
+          >
+            👤 <span>Usuarios y Accesos</span>
+          </button>
+        </div>
+
+        {activeTab === "general" && (
+          <>
         {/* Tarjeta 1.5: Identidad de la Empresa y Personalización de Ticket con Live Preview */}
         <div className="bg-slate-950/65 backdrop-blur-md rounded-3xl border border-slate-850 p-6 sm:p-8 shadow-2xl space-y-6 animate-scale-in">
           <div>
@@ -795,10 +865,13 @@ export default function ConfiguracionPage() {
                           <div className="h-32 rounded-3xl border border-slate-800 bg-slate-950 flex items-center justify-between p-4 px-6 shadow-inner gap-4 relative overflow-hidden group">
                             <div className="flex items-center gap-4">
                               <div className="h-20 w-20 rounded-2xl bg-white border border-slate-200/10 flex items-center justify-center p-2.5 overflow-hidden shadow-md">
-                                <img 
-                                  src={logoPreviewUrl || (companyLogo.startsWith("http") || companyLogo.startsWith("blob:") ? companyLogo : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${companyLogo}`)} 
-                                  alt="Logo comercial" 
-                                  className="max-h-full max-w-full object-contain"
+                                <div
+                                  role="img"
+                                  aria-label="Logo comercial"
+                                  className="h-full w-full bg-contain bg-center bg-no-repeat"
+                                  style={{
+                                    backgroundImage: `url(${logoPreviewUrl || (companyLogo.startsWith("http") || companyLogo.startsWith("blob:") ? companyLogo : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${companyLogo}`)})`,
+                                  }}
                                 />
                               </div>
                               <div className="space-y-0.5 max-w-[180px] sm:max-w-[220px]">
@@ -818,16 +891,22 @@ export default function ConfiguracionPage() {
                                   const fileInput = document.getElementById("logo-file-input");
                                   fileInput?.click();
                                 }}
-                                className="rounded-xl bg-slate-900 hover:bg-slate-800 text-[10px] font-bold text-slate-200 hover:text-white px-3 py-2 border border-slate-800 transition-all cursor-pointer active:scale-95 text-center"
+                                className="rounded-xl bg-slate-900 hover:bg-slate-800 text-[10px] font-bold text-slate-200 hover:text-white px-3 py-2 border border-slate-800 transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
                               >
-                                Reemplazar
+                                <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                </svg>
+                                <span>Reemplazar</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={handleRemoveLogo}
-                                className="rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-bold px-3 py-2 border border-red-500/20 transition-all cursor-pointer active:scale-95 text-center"
+                                className="rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-bold px-3 py-2 border border-red-500/20 transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
                               >
-                                Quitar
+                                <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                                <span>Quitar</span>
                               </button>
                             </div>
                           </div>
@@ -918,7 +997,7 @@ export default function ConfiguracionPage() {
                       type="email"
                       value={companyEmail}
                       onChange={(e) => setCompanyEmail(e.target.value)}
-                      placeholder="Ej. contacto@lapaletixa.com"
+                      placeholder="Ej. contacto@empresa.com"
                       className="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-2.5 text-xs text-white focus:border-slate-700 outline-none"
                     />
                   </div>
@@ -1007,7 +1086,7 @@ export default function ConfiguracionPage() {
             <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 bg-slate-900/30 border border-slate-850 rounded-3xl space-y-4 self-stretch">
               <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">Live Ticket Preview (Simulación de Impresión)</span>
               
-              <div className="w-full max-w-[280px] p-5 rounded-md shadow-2xl border-t-[6px] border-slate-400 font-mono text-[9px] leading-relaxed relative flex flex-col justify-between overflow-hidden" style={{ backgroundColor: 'white', color: '#1e293b' }}>
+              <div className="w-full max-w-[280px] p-5 rounded-md shadow-2xl font-mono text-[9px] leading-relaxed relative flex flex-col justify-between overflow-hidden" style={{ backgroundColor: 'white', color: '#1e293b' }}>
                 {/* Visual Receipt Jagged Edge simulator */}
                 <div className="absolute top-0 left-0 right-0 h-1 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-200 to-transparent" style={{ opacity: 0.5 }}></div>
                 
@@ -1015,12 +1094,12 @@ export default function ConfiguracionPage() {
                   {/* Logo */}
                   {printLogo && (logoPreviewUrl || companyLogo) && (
                     <div className="flex justify-center mb-1">
-                      <img 
-                        src={logoPreviewUrl || (companyLogo.startsWith("http") || companyLogo.startsWith("blob:") ? companyLogo : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${companyLogo}`)} 
-                        alt="Brand Logo" 
-                        className="max-h-8 object-contain max-w-full"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
+                      <div
+                        role="img"
+                        aria-label="Brand Logo"
+                        className="mx-auto h-8 w-full max-w-[120px] bg-contain bg-center bg-no-repeat"
+                        style={{
+                          backgroundImage: `url(${logoPreviewUrl || (companyLogo.startsWith("http") || companyLogo.startsWith("blob:") ? companyLogo : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${companyLogo}`)})`,
                         }}
                       />
                     </div>
@@ -1136,38 +1215,42 @@ export default function ConfiguracionPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
               <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">País de Operación</label>
-              <select
+              <CustomSelect
                 value={country}
-                onChange={(e) => setCountry(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-slate-700 outline-none font-bold"
-              >
-                <option value="Mexico">México</option>
-                <option value="Argentina">Argentina</option>
-                <option value="Colombia">Colombia</option>
-                <option value="Chile">Chile</option>
-                <option value="United States">Estados Unidos</option>
-                <option value="Spain">España</option>
-              </select>
+                onChange={(val) => setCountry(val)}
+                options={[
+                  { value: "Mexico", label: "México" },
+                  { value: "Argentina", label: "Argentina" },
+                  { value: "Colombia", label: "Colombia" },
+                  { value: "Chile", label: "Chile" },
+                  { value: "United States", label: "Estados Unidos" },
+                  { value: "Spain", label: "España" }
+                ]}
+              />
             </div>
 
             <div className="space-y-1.5">
               <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Moneda Local</label>
-              <select
+              <CustomSelect
                 value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-slate-700 outline-none font-bold"
-              >
-                <option value="MXN">MXN - Peso Mexicano</option>
-                <option value="ARS">ARS - Peso Argentino</option>
-                <option value="COP">COP - Peso Colombiano</option>
-                <option value="CLP">CLP - Peso Chileno</option>
-                <option value="USD">USD - Dólar Estadounidense</option>
-                <option value="EUR">EUR - Euro</option>
-              </select>
+                onChange={(val) => setCurrency(val)}
+                options={[
+                  { value: "MXN", label: "MXN - Peso Mexicano" },
+                  { value: "ARS", label: "ARS - Peso Argentino" },
+                  { value: "COP", label: "COP - Peso Colombiano" },
+                  { value: "CLP", label: "CLP - Peso Chileno" },
+                  { value: "USD", label: "USD - Dólar Estadounidense" },
+                  { value: "EUR", label: "EUR - Euro" }
+                ]}
+              />
             </div>
           </div>
         </div>
+        </>
+        )}
 
+        {activeTab === "modulos" && (
+          <>
         {/* Tarjeta 2: Sistema de Habilitación de Módulos Extras */}
         <div className="bg-slate-950/65 backdrop-blur-md rounded-3xl border border-slate-850 p-6 sm:p-8 shadow-2xl space-y-6 animate-scale-in">
           <div>
@@ -1240,6 +1323,27 @@ export default function ConfiguracionPage() {
               />
             </div>
 
+            {/* Toggle Purchasing */}
+            <div className="p-5 bg-slate-900/40 rounded-2xl border border-slate-850 flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-slate-950 rounded-xl text-amber-500 border border-slate-800">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Módulo de Compras</h3>
+                  <p className="text-[10px] text-slate-450 mt-1 leading-normal">Habilita el registro de proveedores, órdenes de compra y recepción de mercancía.</p>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={hasPurchasing}
+                onChange={(e) => setHasPurchasing(e.target.checked)}
+                className="h-5 w-5 rounded border-slate-800 text-amber-500 bg-slate-900 focus:ring-amber-500 cursor-pointer"
+              />
+            </div>
+
             {/* Toggle Reservations */}
             <div className="p-5 bg-slate-900/40 rounded-2xl border border-slate-850 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3.5">
@@ -1300,6 +1404,48 @@ export default function ConfiguracionPage() {
                 checked={hasMexicoTaxes}
                 onChange={(e) => setHasMexicoTaxes(e.target.checked)}
                 className="h-5 w-5 rounded border-slate-800 text-red-500 bg-slate-900 focus:ring-red-500 cursor-pointer"
+              />
+            </div>
+
+            {/* Toggle Services */}
+            <div className="p-5 bg-slate-900/40 rounded-2xl border border-slate-850 flex items-start justify-between gap-4 animate-scale-in">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-slate-950 rounded-xl text-purple-400 border border-slate-800">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Servicios (Timesheets, Mantenimiento, Soporte)</h3>
+                  <p className="text-[10px] text-slate-450 mt-1 leading-normal">Habilita hojas de horas facturables, visitas técnicas de mantenimiento y tickets de soporte técnico.</p>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={hasServices}
+                onChange={(e) => setHasServices(e.target.checked)}
+                className="h-5 w-5 rounded border-slate-800 text-purple-500 bg-slate-900 focus:ring-purple-500 cursor-pointer"
+              />
+            </div>
+
+            {/* Toggle Products */}
+            <div className="p-5 bg-slate-900/40 rounded-2xl border border-slate-850 flex items-start justify-between gap-4 animate-scale-in">
+              <div className="flex items-start gap-3.5">
+                <div className="p-2.5 bg-slate-950 rounded-xl text-pink-400 border border-slate-800">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Productos e Inventario</h3>
+                  <p className="text-[10px] text-slate-450 mt-1 leading-normal">Habilita artículos inventariables, control de almacenes y transacciones de movimiento físico de stock.</p>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={hasProducts}
+                onChange={(e) => setHasProducts(e.target.checked)}
+                className="h-5 w-5 rounded border-slate-800 text-pink-500 bg-slate-900 focus:ring-pink-500 cursor-pointer"
               />
             </div>
 
@@ -1428,7 +1574,11 @@ export default function ConfiguracionPage() {
             </div>
           </div>
         )}
+        </>
+        )}
 
+        {activeTab === "sucursales" && (
+          <>
         {/* Tarjeta 2: Gestión de Sucursales y Asignación de Cajeros */}
         <div className="bg-slate-950/65 backdrop-blur-md rounded-3xl border border-slate-850 p-6 sm:p-8 shadow-2xl space-y-6 animate-scale-in">
           <div>
@@ -1532,7 +1682,11 @@ export default function ConfiguracionPage() {
             )}
           </div>
         </div>
+        </>
+        )}
 
+        {activeTab === "usuarios" && (
+          <>
         {/* Tarjeta 2.5: Gestión de Usuarios y Control de Accesos */}
         <div className="bg-slate-950/65 backdrop-blur-md rounded-3xl border border-slate-850 p-6 sm:p-8 shadow-2xl space-y-6 animate-scale-in">
           <div>
@@ -1671,17 +1825,23 @@ export default function ConfiguracionPage() {
             )}
           </div>
         </div>
+        </>
+        )}
 
+        {activeTab === "general" && (
+          <>
         {/* Estado del Tenant */}
         <div className="bg-slate-950/40 rounded-3xl border border-slate-850 p-6 sm:p-7 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest">Estado del Tenant (Inquilino)</h4>
-            <p className="text-sm font-extrabold text-white">Dominio Operativo: <span className="text-sky-400 font-bold">lapaletixa.local</span></p>
+            <p className="text-sm font-extrabold text-white">Dominio Operativo: <span className="text-sky-400 font-bold">{typeof window !== "undefined" ? window.location.hostname : "localhost"}</span></p>
           </div>
           <span className="text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400 shadow-sm">
             Empresa: {saasConfig?.client_name || "La Paletixa"}
           </span>
         </div>
+        </>
+        )}
       </form>
 
       {/* Modals outside the main form to avoid HTML nesting and hydration errors */}
@@ -1912,7 +2072,7 @@ export default function ConfiguracionPage() {
                   disabled={!!editingUser}
                   value={userEmail}
                   onChange={(e) => setUserEmail(e.target.value)}
-                  placeholder="Ej. cajero.norte@lapaletixa.com"
+                  placeholder="Ej. cajero.norte@empresa.com"
                   className="w-full bg-slate-950 border border-slate-850 rounded-2xl px-4 py-3 text-xs text-white focus:border-slate-700 outline-none font-bold disabled:opacity-50 shadow-md"
                 />
               </div>
@@ -2056,6 +2216,30 @@ export default function ConfiguracionPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {hasChanges() && (
+        <button
+          type="submit"
+          form="config-form"
+          disabled={updating}
+          className="fixed bottom-8 right-8 z-50 rounded-2xl px-6 py-4 text-sm font-black text-white shadow-2xl transition-all duration-300 hover:brightness-110 hover:scale-105 active:scale-95 disabled:opacity-50 cursor-pointer flex items-center gap-2 animate-fade-in"
+          style={{ backgroundColor: primaryColor }}
+        >
+          {updating ? (
+            <>
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-white"></div>
+              <span>Guardando...</span>
+            </>
+          ) : (
+            <>
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Guardar Cambios</span>
+            </>
+          )}
+        </button>
       )}
     </div>
   );

@@ -1,8 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect, react-hooks/immutability */
+
+import React, { useState, useEffect, useCallback } from "react";
 import { useFrappeAuth } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomSelect } from "../components/custom_select";
+import { CustomDatePicker } from "../components/custom_date_picker";
+import { CatalogImageTile } from "../components/catalog_image_tile";
 import AdminOrdersPanel from "./admin_orders_panel";
 
 interface FeatureConfig {
@@ -28,25 +33,9 @@ interface CartItem {
   wholesale_price: number | null;
 }
 
-const CATEGORIES = [
-  { id: "all", label: "🍦 Todos" },
-  { id: "agua", label: "💧 Agua" },
-  { id: "crema", label: "🥛 Crema" },
-  { id: "bolis", label: "⚡ Bolis" },
-  { id: "nieves", label: "❄️ Nieves" },
-  { id: "otros", label: "🍭 Otros" }
-];
 
-const getProductCategory = (itemName: string) => {
-  const name = itemName.toLowerCase();
-  if (name.includes("paleta de agua") || name.includes("trompito de agua")) return "agua";
-  if (name.includes("paleta de crema") || name.includes("trompito de crema")) return "crema";
-  if (name.includes("bolis saborines")) return "bolis";
-  if (name.includes("nieve en vaso")) return "nieves";
-  return "otros";
-};
 
-export default function PuntosFijosPage() {
+export default function MayoristasPage() {
   const { currentUser, isLoading: authLoading } = useFrappeAuth();
   const router = useRouter();
 
@@ -163,6 +152,25 @@ export default function PuntosFijosPage() {
 
   const isWholesaleLocked = !currentUser && !wholesaleSession;
 
+  // Helper para interactuar con Frappe
+  const callFrappeAPI = useCallback(async (method: string, args: any = {}) => {
+    const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
+    const response = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.${method}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+      credentials: "include"
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err._server_messages ? JSON.parse(err._server_messages).join("\n") : err.message || "Error al procesar la venta.");
+    }
+    const data = await response.json();
+    return data.message;
+  }, []);
+
   // Cargar tema inicial
   useEffect(() => {
     const isDark = document.documentElement.classList.contains("dark");
@@ -197,37 +205,58 @@ export default function PuntosFijosPage() {
   // Montos del Cobro
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentMode, setPaymentMode] = useState<string>("Cash");
-  const [warehouse, setWarehouse] = useState<string>("Distribucion - LP");
+  const [warehouse, setWarehouse] = useState<string>("");
 
   // Filtros de Productos
   const [productSearch, setProductSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedCategory, setSelectedCategory] = useState("Todos");
 
-  // Almacenes de origen disponibles
-  const sourceWarehouses = [
-    { name: "Distribucion - LP", label: "📦 Distribución Principal" },
-    { name: "Fabrica - LP", label: "🏭 Fábrica Central" },
-    { name: "Sucursal 1 - LP", label: "🍦 Sucursal 1" }
-  ];
+  // Estados para almacenes de la compañía (se cargan manualmente solo si es administrador)
+  const [dbWarehouses, setDbWarehouses] = useState<any[]>([]);
+  const [warehousesLoading, setWarehousesLoading] = useState<boolean>(false);
 
-  // Helper para interactuar con Frappe
-  const callFrappeAPI = async (method: string, args: any = {}) => {
-    const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
-    const response = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.${method}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(args),
-      credentials: "include"
-    });
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err._server_messages ? JSON.parse(err._server_messages).join("\n") : err.message || "Error al procesar la venta.");
+  useEffect(() => {
+    if (!isAdmin) {
+      setDbWarehouses([]);
+      setWarehousesLoading(false);
+      return;
     }
-    const data = await response.json();
-    return data.message;
+
+    async function fetchWarehouses() {
+      setWarehousesLoading(true);
+      try {
+        const res = await callFrappeAPI("get_active_warehouses_with_stock");
+        setDbWarehouses(res || []);
+      } catch (err) {
+        console.error("Error al cargar almacenes de origen con stock:", err);
+      } finally {
+        setWarehousesLoading(false);
+      }
+    }
+
+    fetchWarehouses();
+  }, [isAdmin, callFrappeAPI]);
+
+  const getWarehouseLabel = (name: string) => {
+    const cleanName = name.split(" - ")[0];
+    if (cleanName.startsWith("Fabrica")) return `🏭 ${cleanName}`;
+    if (cleanName.startsWith("Distribucion")) return `📦 ${cleanName}`;
+    if (cleanName.startsWith("Sucursal")) return `🍦 ${cleanName}`;
+    return `🏪 ${cleanName}`;
   };
+
+  const sourceWarehouses = dbWarehouses?.map((w: any) => ({
+    name: w.name,
+    label: getWarehouseLabel(w.warehouse_name || w.name)
+  })) || [];
+
+  // Inicializar almacén de origen por defecto
+  useEffect(() => {
+    if (dbWarehouses && dbWarehouses.length > 0 && !warehouse) {
+      const dist = dbWarehouses.find(w => w.name.toLowerCase().includes("distribucion"));
+      setWarehouse(dist ? dist.name : dbWarehouses[0].name);
+    }
+  }, [dbWarehouses, warehouse]);
 
   // Cargar configuraciones de marca blanca
   useEffect(() => {
@@ -265,8 +294,8 @@ export default function PuntosFijosPage() {
       try {
         // Si es administrador o personal interno, no restringir como cliente
         const isCashier = userEmail.startsWith("cajero.");
-        const isProdUser = userEmail === "produccion@lapaletixa.com";
-        const isLogisticaUser = userEmail === "logistica@lapaletixa.com";
+        const isProdUser = userEmail ? userEmail.startsWith("produccion@") : false;
+        const isLogisticaUser = userEmail ? userEmail.startsWith("logistica@") : false;
         const isStaff = isCashier || isProdUser || isLogisticaUser || userEmail === "Administrator" || userEmail.includes("admin");
 
         const isUserAdmin = userEmail === "Administrator" || userEmail.includes("admin") || userEmail.startsWith("admin.");
@@ -291,7 +320,7 @@ export default function PuntosFijosPage() {
       }
     }
     loadProfile();
-  }, [currentUser]);
+  }, [currentUser, callFrappeAPI]);
 
   // Control de bloqueo por Feature Flag
   useEffect(() => {
@@ -318,7 +347,7 @@ export default function PuntosFijosPage() {
     } else {
       setSearchResults([]);
     }
-  }, [customerQuery]);
+  }, [customerQuery, callFrappeAPI]);
 
   // Cargar catálogo de helados con precios Standard Selling y Standard Wholesale
   const [items, setItems] = useState<any[]>([]);
@@ -326,17 +355,19 @@ export default function PuntosFijosPage() {
 
   useEffect(() => {
     async function fetchItems() {
+      setItemsLoading(true);
       try {
-        const res = await callFrappeAPI("get_active_items_with_prices");
+        const args = isAdmin && warehouse ? { warehouse } : {};
+        const res = await callFrappeAPI("get_active_items_with_prices", args);
         setItems(res || []);
       } catch (err) {
-        console.error("Error cargando catálogo con precios:", err);
+        console.error("Error cargando catálogo con precios y stock:", err);
       } finally {
         setItemsLoading(false);
       }
     }
     fetchItems();
-  }, []);
+  }, [warehouse, isAdmin, callFrappeAPI]);
 
   // Agregar producto al carrito de venta
   const handleAddProduct = (item: any) => {
@@ -463,19 +494,30 @@ export default function PuntosFijosPage() {
   // Filtrado de catálogo
   const filteredProducts = items?.filter((item) => {
     const matchesSearch = item.item_name.toLowerCase().includes(productSearch.toLowerCase());
-    const matchesCategory = selectedCategory === "all" || getProductCategory(item.item_name) === selectedCategory;
+    const matchesCategory = selectedCategory === "Todos" || item.item_group === selectedCategory;
     return matchesSearch && matchesCategory;
   }) || [];
 
+  const categories = ["Todos", ...Array.from(new Set(items?.map(item => item.item_group).filter(Boolean) || []))];
+
   const cartTotal = cart.reduce((sum, item) => sum + item.qty * item.rate, 0);
   const primaryColor = saasConfig?.colors?.primary || "#1abc9c";
+  const formLayoutClass = isCustomer
+    ? "flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 gap-6 overflow-y-auto pb-[calc(11rem+env(safe-area-inset-bottom))] sm:pb-32"
+    : "flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-y-auto pb-32";
+  const leftPanelClass = isCustomer
+    ? "w-full order-2"
+    : "lg:col-span-4 space-y-6 order-2 lg:order-1";
+  const catalogPanelClass = isCustomer
+    ? "w-full order-1"
+    : "lg:col-span-8 space-y-6 order-1 lg:order-2";
 
   // Pre-cargar el total del carrito en el cobro inmediato
   const handlePayFullAmount = () => {
     setPaymentAmount(parseFloat(cartTotal.toFixed(2)));
   };
 
-  if (authLoading || configLoading || itemsLoading || profileLoading) {
+  if (authLoading || configLoading || itemsLoading || profileLoading || (isAdmin && warehousesLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100 font-sans">
         <div className="flex flex-col items-center gap-4">
@@ -581,96 +623,26 @@ export default function PuntosFijosPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden">
-      
-      {/* Header Glassmorphism */}
-      <header className="bg-slate-950/80 backdrop-blur-md border-b border-slate-850 px-6 py-4 flex items-center justify-between shadow-lg sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-sky-400 to-indigo-500 flex items-center justify-center font-black text-white text-lg shadow-md">
-            VM
-          </div>
-          <div>
-            <h1 className="text-base font-black text-white tracking-wide">
-              {isCustomer ? "Portal de Pedidos Mayoristas" : "Venta Mayorista (Puntos Fijos)"}
-            </h1>
-            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-              {isCustomer 
-                ? `Cliente: ${customerProfile?.customer_name || "Cargando..."}` 
-                : `${saasConfig?.client_name || "La Paletixa"} — Escuelas, Tiendas y Distribución`}
-            </p>
-          </div>
-        </div>
-
-        {/* Toggles de administrador para cambiar de vista */}
-        {!isCustomer && isAdmin && (
-          <div className="flex bg-slate-900 border border-slate-800 p-1 rounded-2xl gap-1">
+      {!isCustomer && isAdmin && (
+        <div className="px-4 sm:px-6 lg:px-8 pt-6 flex-shrink-0">
+          <div className="tab-container flex-shrink-0">
             <button
               type="button"
               onClick={() => setActiveAdminTab("venta_directa")}
-              className={`rounded-xl px-4 py-2 text-xs font-black transition-all cursor-pointer ${
-                activeAdminTab === "venta_directa"
-                  ? "text-white"
-                  : "text-slate-400 hover:text-white"
-              }`}
-              style={activeAdminTab === "venta_directa" ? { backgroundColor: primaryColor } : {}}
+              className={`tab-button ${activeAdminTab === "venta_directa" ? "active" : ""}`}
             >
-              Registrar Venta Directa
+              🛍️ <span>Registrar Venta</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveAdminTab("pedidos_pendientes")}
-              className={`rounded-xl px-4 py-2 text-xs font-black transition-all cursor-pointer ${
-                activeAdminTab === "pedidos_pendientes"
-                  ? "text-white"
-                  : "text-slate-400 hover:text-white"
-              }`}
-              style={activeAdminTab === "pedidos_pendientes" ? { backgroundColor: primaryColor } : {}}
+              className={`tab-button ${activeAdminTab === "pedidos_pendientes" ? "active" : ""}`}
             >
-              Pedidos Mayoristas Pendientes
+              📦 <span>Pedidos Pendientes</span>
             </button>
           </div>
-        )}
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={toggleTheme}
-            type="button"
-            title={theme === "dark" ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
-            className="rounded-full p-2 bg-slate-800 hover:bg-slate-700 text-slate-350 hover:text-white transition-all active:scale-95 cursor-pointer flex items-center justify-center border border-slate-700 shadow-md"
-          >
-            {theme === "dark" ? (
-              <svg className="h-4 w-4 transition-transform duration-300 rotate-0 hover:rotate-45" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 9H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707m12.728 6.364A9 9 0 115.636 5.636m12.728 12.728A9 9 0 015.636 5.636" />
-              </svg>
-            ) : (
-              <svg className="h-4 w-4 transition-transform duration-300 hover:scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
-            )}
-          </button>
-
-          <button
-            onClick={() => {
-              if (wholesaleSession || isCustomer) {
-                handleWholesaleLogout();
-              } else {
-                router.push("/");
-              }
-            }}
-            className="text-slate-400 hover:text-white p-2 rounded-xl border border-slate-850 hover:bg-slate-900 transition-all active:scale-95 cursor-pointer flex items-center justify-center font-bold text-xs"
-            title={(isCustomer || wholesaleSession) ? "Cerrar Sesión" : "Ir al Dashboard"}
-          >
-            {(isCustomer || wholesaleSession) ? (
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            ) : (
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-            )}
-          </button>
         </div>
-      </header>
+      )}
 
       {/* Renderizar Panel de Pedidos Mayoristas si es admin y está seleccionada esa pestaña */}
       {activeAdminTab === "pedidos_pendientes" && !isCustomer && isAdmin ? (
@@ -679,30 +651,17 @@ export default function PuntosFijosPage() {
         </div>
       ) : (
         /* Grid del Layout General: Venta Directa o Pedido de Cliente */
-        <form 
-          onSubmit={isCustomer ? handleOrderSubmit : handleSaleSubmit} 
-          className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-y-auto pb-32"
-        >
+          <form 
+            onSubmit={isCustomer ? handleOrderSubmit : handleSaleSubmit} 
+            className={formLayoutClass}
+          >
         
         {/* PANEL IZQUIERDO: Almacén, Clientes y Datos de Facturación (4/12) */}
-        <div className="lg:col-span-4 space-y-6">
+        <div className={leftPanelClass}>
           
           {isCustomer ? (
-            /* VISTA DEL CLIENTE: Perfil de Cliente y Opciones de Pedido */
+            /* VISTA DEL CLIENTE: Opciones de Pedido */
             <>
-              {/* Información del Cliente */}
-              <div className="bg-slate-950 p-6 rounded-3xl border border-slate-850 shadow-xl space-y-4 text-base">
-                <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-                  <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  Tus Datos de Cliente
-                </h3>
-                <div className="p-4 bg-slate-900 border border-slate-850 rounded-2xl space-y-2 text-xs font-semibold text-slate-355">
-                  <p><strong>Razón Social:</strong> {customerProfile?.customer_name || "Cargando..."}</p>
-                  <p><strong>Código de Cliente:</strong> {selectedCustomer}</p>
-                  <p><strong>Correo Asociado:</strong> {customerProfile?.email || ""}</p>
-                </div>
-              </div>
-
               {/* Opciones del Pedido (Método de Pago y Entrega) */}
               <div className="bg-slate-950 p-6 rounded-3xl border border-slate-850 shadow-xl space-y-6">
                 <h3 className="text-sm font-black text-white uppercase tracking-wider">Opciones del Pedido</h3>
@@ -787,24 +746,19 @@ export default function PuntosFijosPage() {
                 
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase tracking-wider text-slate-400">Origen de Stock</label>
-                  <select
+                  <CustomSelect
                     value={warehouse}
-                    onChange={(e) => setWarehouse(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-sky-500 focus:outline-none font-bold"
-                  >
-                    {sourceWarehouses.map((w) => (
-                      <option key={w.name} value={w.name}>{w.label}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setWarehouse(val)}
+                    options={sourceWarehouses.map((w) => ({ value: w.name, label: w.label }))}
+                  />
                 </div>
 
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase tracking-wider text-slate-400">Fecha de Registro</label>
-                  <input
-                    type="date"
+                  <CustomDatePicker
                     value={postingDate}
-                    onChange={(e) => setPostingDate(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-sm text-white focus:border-sky-500 focus:outline-none font-bold"
+                    onChange={(val) => setPostingDate(val)}
+                    className="focus:border-sky-500"
                   />
                 </div>
               </div>
@@ -943,7 +897,7 @@ export default function PuntosFijosPage() {
         </div>
 
         {/* PANEL CENTRAL/DERECHO: Catálogo Mayorista y Carrito (8/12) */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className={catalogPanelClass}>
           
           {successMessage && (
             <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-sm text-emerald-400 font-semibold">
@@ -982,20 +936,20 @@ export default function PuntosFijosPage() {
 
               {/* Pestañas Horizontales */}
               <div className="flex flex-wrap gap-1.5 border-b border-slate-850 pb-3">
-                {CATEGORIES.map((cat) => {
-                  const isActive = selectedCategory === cat.id;
+                {categories.map((cat) => {
+                  const isActive = selectedCategory === cat;
                   return (
                     <button
-                      key={cat.id}
+                      key={cat}
                       type="button"
-                      onClick={() => setSelectedCategory(cat.id)}
+                      onClick={() => setSelectedCategory(cat)}
                       className={`px-4 py-2 rounded-xl text-xs font-black tracking-wide transition-all active:scale-95 cursor-pointer border ${
                         isActive
                           ? "text-white border-white bg-slate-900"
                           : "bg-slate-900/25 border-slate-850 text-slate-400 hover:border-slate-800 hover:text-white"
                       }`}
                     >
-                      {cat.label}
+                      {cat}
                     </button>
                   );
                 })}
@@ -1012,33 +966,19 @@ export default function PuntosFijosPage() {
                 filteredProducts.map((p) => {
                   const cartItem = cart.find((i) => i.item_code === p.name);
                   const qty = cartItem ? cartItem.qty : 0;
-                  const itemUrl = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
-                  const imageUrl = p.image
-                    ? p.image.startsWith("http")
-                      ? p.image
-                      : `${itemUrl}${p.image}`
-                    : null;
 
                   return (
-                    <div
-                      key={p.name}
-                      className="group rounded-2xl border border-slate-850 bg-slate-900/20 hover:bg-slate-900/40 p-3 flex flex-col justify-between hover:border-slate-750 transition-all hover:scale-[1.01] h-[260px]"
-                    >
+                    <div key={p.name} className="relative rounded-3xl border border-slate-800 bg-slate-950 p-4 sm:p-5 shadow-lg flex flex-col justify-between overflow-hidden transition-all duration-300 hover:border-slate-700 hover:shadow-2xl">
                       {/* Imagen */}
-                      <div className="aspect-square w-full rounded-xl bg-slate-950 flex items-center justify-center overflow-hidden relative border border-slate-850">
-                        {imageUrl ? (
-                          <img
-                            src={imageUrl}
-                            alt={p.item_name}
-                            className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-                          />
-                        ) : (
-                          <span className="text-2xl">🍦</span>
-                        )}
-                      </div>
+                      <CatalogImageTile
+                        className="aspect-square w-full mb-4"
+                        src={p.image}
+                        alt={p.item_name}
+                        mode="cover"
+                      />
 
                       {/* Detalles del Sabor */}
-                      <div className="mt-2 min-w-0">
+                      <div className="min-w-0">
                         <span className="text-xs font-black text-white truncate block" title={p.item_name}>
                           {p.item_name}
                         </span>
@@ -1053,11 +993,19 @@ export default function PuntosFijosPage() {
                               <span className="text-xs text-amber-400 font-black">${p.wholesale_price.toFixed(2)}</span>
                             </div>
                           )}
+                          {!isCustomer && isAdmin && p.actual_qty !== undefined && p.actual_qty !== null && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-slate-450 font-bold">Stock:</span>
+                              <span className={`text-[11px] font-extrabold ${p.actual_qty > 0 ? "text-emerald-400" : "text-rose-500 font-bold"}`}>
+                                {p.actual_qty > 0 ? `${p.actual_qty} pz` : "Sin stock"}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {/* Botón de Agregar / Stepper de Lote */}
-                      <div className="mt-3">
+                      <div className="mt-4 shrink-0">
                         {qty === 0 ? (
                           <button
                             type="button"

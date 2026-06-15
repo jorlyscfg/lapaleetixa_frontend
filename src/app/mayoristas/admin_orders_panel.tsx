@@ -1,6 +1,10 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
+
 import React, { useState, useEffect } from "react";
+import { useFrappeGetDocList } from "frappe-react-sdk";
+import { useSaaSConfig } from "../providers";
 
 interface OrderItem {
   item_code: string;
@@ -30,6 +34,21 @@ interface AdminOrdersPanelProps {
 }
 
 export default function AdminOrdersPanel({ primaryColor, callFrappeAPI }: AdminOrdersPanelProps) {
+  const { saasConfig } = useSaaSConfig();
+  const { data: dbWarehouses } = useFrappeGetDocList("Warehouse", {
+    fields: ["name"],
+    filters: saasConfig?.client_name ? [
+      ["company", "=", saasConfig.client_name],
+      ["is_group", "=", 0],
+      ["disabled", "=", 0]
+    ] : undefined,
+    limit: 100
+  });
+
+  const defaultWarehouse = dbWarehouses?.find((w: any) => w.name.toLowerCase().includes("distribucion"))?.name 
+    || dbWarehouses?.[0]?.name 
+    || "";
+
   const [orders, setOrders] = useState<WholesaleOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -98,7 +117,7 @@ export default function AdminOrdersPanel({ primaryColor, callFrappeAPI }: AdminO
         sales_order_name: selectedOrder.name,
         register_payment: registerPayment ? 1 : 0,
         payment_mode: paymentMode,
-        warehouse: "Distribucion - LP"
+        warehouse: defaultWarehouse
       });
 
       setSuccessMessage(
@@ -226,7 +245,7 @@ export default function AdminOrdersPanel({ primaryColor, callFrappeAPI }: AdminO
                         {order.contact_phone && (
                           <a
                             href={`https://wa.me/${order.contact_phone.replace(/[^\d+]/g, "")}?text=${encodeURIComponent(
-                              `Hola ${order.customer_name}, te escribo de La Paletixa para coordinar los detalles de tu pedido mayorista ${order.name}.`
+                              `Hola ${order.customer_name}, te escribo de ${saasConfig?.company_name || saasConfig?.client_name || "nuestra empresa"} para coordinar los detalles de tu pedido mayorista ${order.name}.`
                             )}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -248,22 +267,26 @@ export default function AdminOrdersPanel({ primaryColor, callFrappeAPI }: AdminO
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-6">
-                      <div className="text-right">
-                        <span className="text-[9px] text-slate-450 font-black uppercase tracking-wider block">Método de Pago</span>
-                        <span className="text-xs font-black text-amber-400 uppercase tracking-wide">
-                          {order.custom_metodo_pago}
-                        </span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6 w-full sm:w-auto border-t border-slate-850/40 pt-4 sm:border-none sm:pt-0">
+                      {/* Grid de Pago y Monto en móvil */}
+                      <div className="flex items-center justify-between sm:justify-end gap-6">
+                        <div className="text-left sm:text-right">
+                          <span className="text-[9px] text-slate-450 font-black uppercase tracking-wider block">Método de Pago</span>
+                          <span className="text-xs font-black text-amber-400 uppercase tracking-wide">
+                            {order.custom_metodo_pago}
+                          </span>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="text-[9px] text-slate-450 font-black uppercase tracking-wider block">Monto Total</span>
+                          <span className="text-sm font-black text-white">
+                            ${order.grand_total.toFixed(2)}
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="text-right">
-                        <span className="text-[9px] text-slate-450 font-black uppercase tracking-wider block">Monto Total</span>
-                        <span className="text-sm font-black text-white">
-                          ${order.grand_total.toFixed(2)}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
+                      {/* Botones de acción */}
+                      <div className="flex items-center justify-between sm:justify-end gap-2">
                         {/* Botón de Acción Principal */}
                         <button
                           type="button"
@@ -272,7 +295,7 @@ export default function AdminOrdersPanel({ primaryColor, callFrappeAPI }: AdminO
                             handleOpenConfirm(order);
                           }}
                           disabled={isProcessing}
-                          className="rounded-xl px-4 py-2 text-xs font-black text-white transition-all active:scale-95 cursor-pointer shadow-md whitespace-nowrap disabled:opacity-40"
+                          className="flex-1 sm:flex-initial rounded-xl px-4 py-2.5 text-xs font-black text-white transition-all active:scale-95 cursor-pointer shadow-md whitespace-nowrap disabled:opacity-40 text-center"
                           style={{ backgroundColor: primaryColor }}
                         >
                           {isProcessing ? "Procesando..." : "Confirmar y Entregar"}
@@ -407,7 +430,7 @@ export default function AdminOrdersPanel({ primaryColor, callFrappeAPI }: AdminO
               </div>
               
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-[10px] text-amber-400 leading-normal font-semibold">
-                ℹ️ Al confirmar se generará una **Factura de Venta** vinculada con `update_stock = 1`, la cual deducirá el inventario de **Distribución - LP** de inmediato.
+                ℹ️ Al confirmar se generará una **Factura de Venta** vinculada con `update_stock = 1`, la cual deducirá el inventario de **{defaultWarehouse.split(" - ")[0]}** de inmediato.
               </div>
             </div>
 

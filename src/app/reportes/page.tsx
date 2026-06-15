@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth, useFrappeGetCall } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomDatePicker } from "../components/custom_date_picker";
 
 interface MetricState {
   total_sales_today: number;
@@ -27,6 +28,9 @@ interface SaasConfig {
   client_name?: string;
   colors?: {
     primary?: string;
+  };
+  features?: {
+    purchasing?: boolean;
   };
 }
 
@@ -170,6 +174,33 @@ interface FrappeError {
   message?: string;
 }
 
+interface PurchaseOrder {
+  name: string;
+  transaction_date: string;
+  supplier: string;
+  supplier_name?: string;
+  net_total?: number;
+  total_taxes_and_charges?: number;
+  grand_total: number;
+  display_status?: string;
+  docstatus: number;
+}
+
+interface SupplierReportRow {
+  name: string;
+  supplier_name: string;
+  last_purchase_date?: string;
+  total_orders: number;
+  total_amount: number;
+}
+
+interface SupplierExpense {
+  supplier: string;
+  supplier_name: string;
+  count: number;
+  total: number;
+}
+
 export default function ReportsPage() {
   const { currentUser, isLoading: authLoading } = useFrappeAuth();
   const router = useRouter();
@@ -184,12 +215,21 @@ export default function ReportsPage() {
     return new Date().toISOString().split("T")[0];
   });
 
-  const [activeSubTab, setActiveSubTab] = useState<"ventas" | "stock" | "auditoria" | "turnos">("ventas");
+  const [activeSubTab, setActiveSubTab] = useState<"ventas" | "compras" | "stock" | "auditoria" | "turnos">("ventas");
   const [selectedShift, setSelectedShift] = useState<ShiftData | null>(null);
   const [auditSubTab, setAuditSubTab] = useState<"inventario" | "ventas" | "cambios">("inventario");
   const [saasConfig, setSaasConfig] = useState<SaasConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
+  const [purchasePage, setPurchasePage] = useState<number>(1);
+
+  // Reiniciar página de compras durante el renderizado si cambian los filtros o la pestaña activa
+  const currentKey = `${startDate}_${endDate}_${activeSubTab}`;
+  const [prevKey, setPrevKey] = useState(currentKey);
+  if (prevKey !== currentKey) {
+    setPrevKey(currentKey);
+    setPurchasePage(1);
+  }
 
   // Cargar configuraciones de marca blanca
   useEffect(() => {
@@ -216,8 +256,8 @@ export default function ReportsPage() {
   useEffect(() => {
     if (!authLoading && currentUser) {
       const isCashier = currentUser.startsWith("cajero.");
-      const isProdUser = currentUser === "produccion@lapaletixa.com";
-      const isLogisticaUser = currentUser === "logistica@lapaletixa.com";
+      const isProdUser = currentUser ? currentUser.startsWith("produccion@") : false;
+      const isLogisticaUser = currentUser ? currentUser.startsWith("logistica@") : false;
       const isAdmin = !isCashier && !isProdUser && !isLogisticaUser;
 
       if (!isAdmin) {
@@ -276,6 +316,38 @@ export default function ReportsPage() {
   );
   const shifts = (shiftsRaw as { message?: { shifts?: ShiftData[] } })?.message?.shifts || [];
 
+  // Verificar si existen compras en el historial (independientemente del filtro de fechas)
+  const { data: hasAnyPurchasesRaw } = useFrappeGetCall(
+    "paletixa_saas.paletixa_saas.api.get_purchase_history",
+    { limit: 1 },
+    "saas_check_any_purchase"
+  );
+  const hasAnyPurchases = ((hasAnyPurchasesRaw as { message?: { orders?: PurchaseOrder[] } })?.message?.orders?.length || 0) > 0;
+  const showPurchasingReport = !!(saasConfig?.features?.purchasing || hasAnyPurchases);
+
+  // Obtener Datos de Historial de Compras para Reportes
+  const { data: purchaseHistoryRaw, error: purchaseHistoryError, isLoading: purchaseHistoryLoading } = useFrappeGetCall(
+    "paletixa_saas.paletixa_saas.api.get_purchase_history",
+    { from_date: startDate, to_date: endDate, limit: 150 },
+    showPurchasingReport ? `saas_purchase_report_${startDate}_${endDate}` : null
+  );
+  const purchaseHistory: PurchaseOrder[] = (purchaseHistoryRaw as { message?: { orders?: PurchaseOrder[] } })?.message?.orders || [];
+
+  const ITEMS_PER_PAGE = 10;
+  const totalPurchasePages = Math.ceil(purchaseHistory.length / ITEMS_PER_PAGE);
+  const paginatedPurchases = purchaseHistory.slice(
+    (purchasePage - 1) * ITEMS_PER_PAGE,
+    purchasePage * ITEMS_PER_PAGE
+  );
+
+  // Obtener Datos de Proveedores para Reportes
+  const { data: suppliersRaw, error: suppliersError, isLoading: suppliersLoading } = useFrappeGetCall(
+    "paletixa_saas.paletixa_saas.api.get_suppliers",
+    {},
+    showPurchasingReport ? "saas_suppliers_report" : null
+  );
+  const suppliersReport: SupplierReportRow[] = (suppliersRaw as { message?: SupplierReportRow[] })?.message || [];
+
   const activeColor = saasConfig?.colors?.primary || "#3498db";
 
   // Función para exportar a CSV de forma nativa
@@ -307,13 +379,15 @@ export default function ReportsPage() {
   };
 
   // Pantalla de error amigable en lugar de reventar en bucle de refresco
-  if (metricsError || salesReportError || stockReportError || auditReportError || shiftsError) {
+  if (metricsError || salesReportError || stockReportError || auditReportError || shiftsError || (showPurchasingReport && (purchaseHistoryError || suppliersError))) {
     const errorMsg =
       (metricsError as FrappeError)?.message ||
       (salesReportError as FrappeError)?.message ||
       (stockReportError as FrappeError)?.message ||
       (auditReportError as FrappeError)?.message ||
       (shiftsError as FrappeError)?.message ||
+      (purchaseHistoryError as FrappeError)?.message ||
+      (suppliersError as FrappeError)?.message ||
       "No tenés permisos para acceder a esta sección de reportes o la sesión ha expirado.";
 
     return (
@@ -345,7 +419,7 @@ export default function ReportsPage() {
     );
   }
 
-  if (authLoading || configLoading || metricsLoading || salesReportLoading || stockReportLoading || auditReportLoading || shiftsLoading) {
+  if (authLoading || configLoading || metricsLoading || salesReportLoading || stockReportLoading || auditReportLoading || shiftsLoading || (showPurchasingReport && (purchaseHistoryLoading || suppliersLoading))) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100 font-sans">
         <div className="flex flex-col items-center gap-4">
@@ -364,8 +438,17 @@ export default function ReportsPage() {
     const minVal = 0;
     const valRange = maxVal - minVal;
 
+    if (data.length === 1) {
+      const d = data[0];
+      const y = height - ((d.total - minVal) / valRange) * height;
+      const points = [{ x: width / 2, y }];
+      const linePath = `M 0 ${y} L ${width} ${y}`;
+      const areaPath = `M 0 ${y} L ${width} ${y} L ${width} ${height} L 0 ${height} Z`;
+      return { linePath, areaPath, points };
+    }
+
     const points = data.map((d, index) => {
-      const x = (index / (data.length - 1 || 1)) * width;
+      const x = (index / (data.length - 1)) * width;
       const y = height - ((d.total - minVal) / valRange) * height;
       return { x, y };
     });
@@ -380,41 +463,107 @@ export default function ReportsPage() {
   const svgHeight = 240;
   const { linePath, areaPath, points: trendPoints } = generateSvgPath(salesReport?.sales_trend || [], svgWidth, svgHeight);
 
+  // Cálculos para el reporte de compras (derivados del estado)
+  const getPurchaseMetrics = () => {
+    if (!purchaseHistory || purchaseHistory.length === 0) {
+      return { totalSpent: 0, orderCount: 0, activeSuppliers: 0, avgCost: 0 };
+    }
+    const validOrders = purchaseHistory.filter((po: PurchaseOrder) => po.docstatus !== 2); // Excluir canceladas
+    const totalSpent = validOrders.reduce((sum: number, po: PurchaseOrder) => sum + (po.grand_total || 0), 0);
+    const orderCount = validOrders.length;
+    const activeSuppliers = new Set(validOrders.map((po: PurchaseOrder) => po.supplier)).size;
+    const avgCost = orderCount > 0 ? totalSpent / orderCount : 0;
+    return { totalSpent, orderCount, activeSuppliers, avgCost };
+  };
+  const purchaseMetrics = getPurchaseMetrics();
+
+  // Tendencia de compras (agrupado por fecha)
+  const getPurchaseTrend = () => {
+    if (!purchaseHistory || purchaseHistory.length === 0) return [];
+    const map: Record<string, number> = {};
+    purchaseHistory.forEach((po: PurchaseOrder) => {
+      if (po.docstatus !== 2) {
+        const date = po.transaction_date;
+        map[date] = (map[date] || 0) + (po.grand_total || 0);
+      }
+    });
+    return Object.keys(map).sort().map(date => ({ date, total: map[date] }));
+  };
+  const purchaseTrend = getPurchaseTrend();
+
+  const { linePath: pLinePath, areaPath: pAreaPath, points: pTrendPoints } = generateSvgPath(purchaseTrend, svgWidth, svgHeight);
+
+  // Compras por proveedor
+  const getPurchasesBySupplier = (): SupplierExpense[] => {
+    if (!purchaseHistory || purchaseHistory.length === 0) return [];
+    const map: Record<string, SupplierExpense> = {};
+    purchaseHistory.forEach((po: PurchaseOrder) => {
+      if (po.docstatus !== 2) {
+        const sup = po.supplier;
+        if (!map[sup]) {
+          map[sup] = {
+            supplier: sup,
+            supplier_name: po.supplier_name || po.supplier,
+            count: 0,
+            total: 0
+          };
+        }
+        map[sup].count += 1;
+        map[sup].total += po.grand_total || 0;
+      }
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  };
+  const purchasesBySupplier = getPurchasesBySupplier();
+
+  const handleExportPurchaseCSV = () => {
+    if (!purchaseHistory || purchaseHistory.length === 0) return;
+
+    const headers = ["Orden ID", "Fecha", "Proveedor ID", "Proveedor", "Total Neto", "Impuestos", "Total", "Estado"];
+    const rows = purchaseHistory.map((po: PurchaseOrder) => [
+      po.name,
+      po.transaction_date,
+      po.supplier,
+      po.supplier_name || po.supplier,
+      (po.net_total || 0).toFixed(2),
+      (po.total_taxes_and_charges || 0).toFixed(2),
+      (po.grand_total || 0).toFixed(2),
+      po.display_status || "",
+    ]);
+
+    const csvContent =
+      "data:text/csv;charset=utf-8,\uFEFF" +
+      [headers.join(","), ...rows.map((e: Array<string | number>) => e.map(val => `"${val}"`).join(","))].join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `reporte_compras_${startDate}_a_${endDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="relative w-full h-full overflow-y-auto bg-slate-900 text-slate-100 font-sans">
       <main className="w-full px-4 sm:px-6 lg:px-8 py-6 flex flex-col space-y-6 overflow-y-auto">
         
-        {/* Encabezado e Selector de Fechas */}
-        <div className="bg-slate-950 p-6 rounded-3xl border border-slate-850 shadow-xl flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1 text-left">
-            <h1 className="text-2xl font-black text-white">
-              Reportes Administrativos
-            </h1>
-            <p className="text-xs text-slate-400 font-medium leading-relaxed">
-              Analizá en tiempo real el rendimiento transaccional, stock general y canales de distribución de <strong style={{ color: activeColor }}>{saasConfig?.client_name || "la empresa"}</strong>.
-            </p>
-          </div>
-
-          {/* Filtro Rango de Fechas */}
-          <div className="flex flex-wrap items-center gap-3 bg-slate-900 p-2 rounded-2xl border border-slate-800">
-            <div className="flex items-center gap-2 px-2">
-              <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Desde:</span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:border-indigo-500 focus:outline-none cursor-pointer"
-              />
-            </div>
-            <div className="flex items-center gap-2 px-2 border-l border-slate-800">
-              <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Hasta:</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:border-indigo-500 focus:outline-none cursor-pointer"
-              />
-            </div>
+        {/* Filtro Rango de Fechas */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950 p-4 rounded-3xl border border-slate-850 shadow-xl">
+          <span className="text-xs font-black uppercase text-slate-450 tracking-wider">Filtrar Rango de Análisis:</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 w-full sm:w-auto">
+            <CustomDatePicker
+              value={startDate}
+              onChange={(val) => setStartDate(val)}
+              className="!py-1.5 !px-2.5 !text-xs"
+            />
+            <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest px-1">A</span>
+            <CustomDatePicker
+              value={endDate}
+              onChange={(val) => setEndDate(val)}
+              className="!py-1.5 !px-2.5 !text-xs"
+              align="right"
+            />
           </div>
         </div>
 
@@ -486,8 +635,19 @@ export default function ReportsPage() {
             }}
             className={`tab-button ${activeSubTab === "ventas" ? "active" : ""}`}
           >
-            📊 Análisis de Ventas
+            📊 <span>Análisis de Ventas</span>
           </button>
+          {showPurchasingReport && (
+            <button
+              onClick={() => {
+                setActiveSubTab("compras");
+                setSelectedShift(null);
+              }}
+              className={`tab-button ${activeSubTab === "compras" ? "active" : ""}`}
+            >
+              🛒 <span>Análisis de Compras</span>
+            </button>
+          )}
           <button
             onClick={() => {
               setActiveSubTab("stock");
@@ -495,16 +655,7 @@ export default function ReportsPage() {
             }}
             className={`tab-button ${activeSubTab === "stock" ? "active" : ""}`}
           >
-            📦 Inventario General
-          </button>
-          <button
-            onClick={() => {
-              setActiveSubTab("auditoria");
-              setSelectedShift(null);
-            }}
-            className={`tab-button ${activeSubTab === "auditoria" ? "active" : ""}`}
-          >
-            📋 Registro de Auditoría
+            📦 <span>Inventario General</span>
           </button>
           <button
             onClick={() => {
@@ -513,7 +664,16 @@ export default function ReportsPage() {
             }}
             className={`tab-button ${activeSubTab === "turnos" ? "active" : ""}`}
           >
-            🔑 Control de Turnos / Cajas
+            🔑 <span>Control de Turnos / Cajas</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveSubTab("auditoria");
+              setSelectedShift(null);
+            }}
+            className={`tab-button ${activeSubTab === "auditoria" ? "active" : ""}`}
+          >
+            📋 <span>Registro de Auditoría</span>
           </button>
         </div>
 
@@ -581,9 +741,15 @@ export default function ReportsPage() {
 
                   {/* Etiquetas de Eje X */}
                   <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase tracking-widest pt-4">
-                    <span>{salesReport?.sales_trend?.[0]?.date}</span>
-                    <span>{salesReport?.sales_trend?.[Math.floor((salesReport?.sales_trend?.length || 0) / 2)]?.date}</span>
-                    <span>{salesReport?.sales_trend?.[(salesReport?.sales_trend?.length || 1) - 1]?.date}</span>
+                    {salesReport?.sales_trend?.length === 1 ? (
+                      <span className="w-full text-center">{salesReport.sales_trend[0].date}</span>
+                    ) : (
+                      <>
+                        <span>{salesReport?.sales_trend?.[0]?.date}</span>
+                        <span>{salesReport?.sales_trend?.[Math.floor((salesReport?.sales_trend?.length || 0) / 2)]?.date}</span>
+                        <span>{salesReport?.sales_trend?.[(salesReport?.sales_trend?.length || 1) - 1]?.date}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -666,7 +832,7 @@ export default function ReportsPage() {
             </div>
 
             {/* TABLA: Detalle de Facturas Recientes */}
-            <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl">
+            <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl w-full overflow-hidden">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
                 <div className="text-left">
                   <h3 className="text-lg font-black text-white">Registro Detallado de Facturación</h3>
@@ -738,9 +904,310 @@ export default function ReportsPage() {
           </div>
         )}
 
+        {/* VISTA B: ANALISIS DE COMPRAS */}
+        {activeSubTab === "compras" && showPurchasingReport && (
+          <div className="space-y-6 animate-fade-in">
+            
+            {/* KPI Cards de Compras */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="group rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all hover:border-slate-700">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Gasto Total en Compras</span>
+                  <h3 className="text-2xl font-black text-amber-400 mt-1.5">${purchaseMetrics.totalSpent.toFixed(2)}</h3>
+                </div>
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-450 mt-4 pt-4 border-t border-slate-900/60">
+                  <span>Período Seleccionado</span>
+                </div>
+              </div>
+
+              <div className="group rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all hover:border-slate-700">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Órdenes de Compra</span>
+                  <h3 className="text-2xl font-black text-white mt-1.5">{purchaseMetrics.orderCount} OC</h3>
+                </div>
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-450 mt-4 pt-4 border-t border-slate-900/60">
+                  <span>Órdenes recibidas y confirmadas</span>
+                </div>
+              </div>
+
+              <div className="group rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all hover:border-slate-700">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Proveedores Activos</span>
+                  <h3 className="text-2xl font-black text-white mt-1.5">{purchaseMetrics.activeSuppliers} proveedores</h3>
+                </div>
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-450 mt-4 pt-4 border-t border-slate-900/60">
+                  <span>Con transacciones en el rango</span>
+                </div>
+              </div>
+
+              <div className="group rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all hover:border-slate-700">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Costo Promedio de Compra</span>
+                  <h3 className="text-2xl font-black text-white mt-1.5">${purchaseMetrics.avgCost.toFixed(2)}</h3>
+                </div>
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-450 mt-4 pt-4 border-t border-slate-900/60">
+                  <span>Promedio por orden de compra</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CONTENEDOR 1: Gráfico Tendencia de Compras */}
+            <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 sm:p-8 shadow-xl">
+              <div className="flex items-center justify-between mb-8">
+                <div className="text-left">
+                  <h3 className="text-lg font-black text-white">Tendencia Histórica de Compras</h3>
+                  <p className="text-xs text-slate-400 mt-1">Evolución diaria de los montos invertidos en compras de inventario.</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full shadow-md bg-amber-500"></span>
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Monto Diario ($)</span>
+                </div>
+              </div>
+
+              {purchaseTrend.length > 0 ? (
+                <div className="relative w-full overflow-hidden">
+                  <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto overflow-visible select-none">
+                    <defs>
+                      <linearGradient id="purchasesGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.25" />
+                        <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Guías horizontales de fondo */}
+                    <line x1="0" y1={svgHeight * 0.25} x2={svgWidth} y2={svgHeight * 0.25} stroke="#1e293b" strokeDasharray="4 4" />
+                    <line x1="0" y1={svgHeight * 0.5} x2={svgWidth} y2={svgHeight * 0.5} stroke="#1e293b" strokeDasharray="4 4" />
+                    <line x1="0" y1={svgHeight * 0.75} x2={svgWidth} y2={svgHeight * 0.75} stroke="#1e293b" strokeDasharray="4 4" />
+                    <line x1="0" y1={svgHeight} x2={svgWidth} y2={svgHeight} stroke="#1e293b" />
+
+                    {/* Path de área rellena con gradiente */}
+                    {pAreaPath && <path d={pAreaPath} fill="url(#purchasesGrad)" />}
+
+                    {/* Línea principal */}
+                    {pLinePath && <path d={pLinePath} fill="none" stroke="#f59e0b" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />}
+
+                    {/* Puntos en la serie */}
+                    {pTrendPoints?.map((p, index) => {
+                      const item = purchaseTrend[index];
+                      if (!item) return null;
+                      return (
+                        <g key={index} className="group cursor-pointer">
+                          <circle
+                            cx={p.x}
+                            cy={p.y}
+                            r={4}
+                            fill="#f59e0b"
+                            stroke="#ffffff"
+                            strokeWidth={1.5}
+                            className="transition-all duration-250 hover:r-6"
+                          />
+                          <title>
+                            {item.date}: ${item.total.toFixed(2)}
+                          </title>
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {/* Etiquetas de Eje X */}
+                  <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase tracking-widest pt-4">
+                    {purchaseTrend.length === 1 ? (
+                      <span className="w-full text-center">{purchaseTrend[0].date}</span>
+                    ) : (
+                      <>
+                        <span>{purchaseTrend[0]?.date}</span>
+                        <span>{purchaseTrend[Math.floor(purchaseTrend.length / 2)]?.date}</span>
+                        <span>{purchaseTrend[purchaseTrend.length - 1]?.date}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-12 flex flex-col items-center justify-center text-slate-500 gap-2 border border-slate-850 rounded-2xl border-dashed">
+                  <svg className="h-8 w-8 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span className="text-xs font-semibold">No se registran compras en el período seleccionado.</span>
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN DOS: Rendimiento Proveedores y Catálogo */}
+            <div className="grid gap-6 md:grid-cols-2">
+              
+              {/* Contenedor 2: Compras por Proveedor */}
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-6">
+                <div className="text-left">
+                  <h3 className="text-base font-black text-white">Gasto por Proveedor (Rango)</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Monto total invertido por cada proveedor en el período.</p>
+                </div>
+
+                <div className="space-y-4">
+                  {purchasesBySupplier.length > 0 ? (
+                    purchasesBySupplier.slice(0, 5).map((row: SupplierExpense) => {
+                      const maxVal = Math.max(...purchasesBySupplier.map((b: SupplierExpense) => b.total), 1);
+                      const percent = (row.total / maxVal) * 105; // 105 to pad and avoid overflow
+                      return (
+                        <div key={row.supplier} className="space-y-1.5 text-left">
+                          <div className="flex justify-between items-center text-xs font-bold">
+                            <span className="text-white">{row.supplier_name}</span>
+                            <span className="text-amber-400 font-extrabold">${row.total.toFixed(2)}</span>
+                          </div>
+                          <div className="h-2.5 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                            <div
+                              className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-amber-500 to-orange-400"
+                              style={{ width: `${percent}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-slate-500 text-xs py-8 text-center">Sin transacciones registradas por proveedor.</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Contenedor 3: Proveedores Registrados y sus Stats Históricos */}
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-6">
+                <div className="text-left">
+                  <h3 className="text-base font-black text-white">Proveedores Registrados</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Resumen de estadísticas históricas de proveedores en la base de datos.</p>
+                </div>
+
+                <div className="divide-y divide-slate-900/60 max-h-[280px] overflow-y-auto pr-1">
+                  {suppliersReport.length > 0 ? (
+                    suppliersReport.map((row: SupplierReportRow) => (
+                      <div key={row.name} className="py-3 flex items-center justify-between text-left first:pt-0 last:pb-0">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 font-black text-xs">
+                            {row.supplier_name?.[0]?.toUpperCase() || "P"}
+                          </div>
+                          <div className="space-y-0.5">
+                            <h4 className="text-xs font-bold text-white leading-tight">{row.supplier_name}</h4>
+                            <p className="text-[10px] text-slate-500 font-semibold">Última compra: {row.last_purchase_date || "Nunca"}</p>
+                          </div>
+                        </div>
+                        <div className="text-right space-y-0.5">
+                          <span className="text-xs font-black text-white">{row.total_orders} compras</span>
+                          <p className="text-[10px] text-amber-400 font-bold">${(row.total_amount || 0).toFixed(2)}</p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-500 text-xs py-8 text-center">No hay proveedores creados en el sistema.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* TABLA: Detalle de Órdenes de Compra */}
+            <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl w-full overflow-hidden">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
+                <div className="text-left">
+                  <h3 className="text-lg font-black text-white">Registro de Órdenes de Compra</h3>
+                  <p className="text-xs text-slate-400 mt-1">Órdenes emitidas y recepcionadas en el período seleccionado.</p>
+                </div>
+                {purchaseHistory.length > 0 && (
+                  <button
+                    onClick={handleExportPurchaseCSV}
+                    className="bg-amber-500 hover:brightness-110 text-white px-4 py-2.5 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Exportar CSV
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                <table className="w-full text-sm text-left border-collapse text-slate-350">
+                  <thead className="text-[10px] font-black uppercase tracking-wider text-slate-550 bg-slate-900 border-b border-slate-800">
+                    <tr>
+                      <th className="px-6 py-4">Orden ID</th>
+                      <th className="px-6 py-4">Fecha</th>
+                      <th className="px-6 py-4">Proveedor</th>
+                      <th className="px-6 py-4">Monto Neto</th>
+                      <th className="px-6 py-4">Impuestos</th>
+                      <th className="px-6 py-4">Estado</th>
+                      <th className="px-6 py-4 text-right">Gran Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-850/60">
+                    {paginatedPurchases.length > 0 ? (
+                      paginatedPurchases.map((po: PurchaseOrder) => (
+                        <tr key={po.name} className="hover:bg-slate-900/35 transition-colors">
+                          <td className="px-6 py-4 font-bold text-white text-xs">{po.name}</td>
+                          <td className="px-6 py-4 text-xs font-semibold">{po.transaction_date}</td>
+                          <td className="px-6 py-4 font-semibold text-xs text-slate-200">
+                            {po.supplier_name || po.supplier}
+                          </td>
+                          <td className="px-6 py-4 text-xs font-semibold">${(po.net_total || 0).toFixed(2)}</td>
+                          <td className="px-6 py-4 text-xs font-semibold">${(po.total_taxes_and_charges || 0).toFixed(2)}</td>
+                          <td className="px-6 py-4 text-xs">
+                            <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                              po.display_status === "Recibida"
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/10"
+                                : po.display_status === "Cancelada"
+                                ? "bg-red-500/10 text-red-400 border border-red-500/10"
+                                : "bg-amber-500/10 text-amber-400 border border-amber-500/10"
+                            }`}>
+                              {po.display_status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right font-black text-xs text-white">
+                            ${po.grand_total.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="px-6 py-8 text-center text-slate-500 font-semibold">
+                          Sin órdenes de compra registradas en este período.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Controles de Paginación */}
+              {totalPurchasePages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t border-slate-900/60 mt-4">
+                  <div className="text-xs text-slate-400 font-medium">
+                    Mostrando <span className="text-white font-bold">{Math.min((purchasePage - 1) * ITEMS_PER_PAGE + 1, purchaseHistory.length)}</span> a{" "}
+                    <span className="text-white font-bold">{Math.min(purchasePage * ITEMS_PER_PAGE, purchaseHistory.length)}</span> de{" "}
+                    <span className="text-white font-bold">{purchaseHistory.length}</span> órdenes
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPurchasePage(p => Math.max(p - 1, 1))}
+                      disabled={purchasePage === 1}
+                      className="rounded-xl bg-slate-900 hover:bg-slate-850 disabled:opacity-40 disabled:hover:bg-slate-900 disabled:cursor-not-allowed px-3 py-2 text-xs font-black text-slate-200 border border-slate-800 transition-all active:scale-95 cursor-pointer shadow-md"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-xs font-bold text-slate-400 px-2">
+                      Página {purchasePage} de {totalPurchasePages}
+                    </span>
+                    <button
+                      onClick={() => setPurchasePage(p => Math.min(p + 1, totalPurchasePages))}
+                      disabled={purchasePage === totalPurchasePages}
+                      className="rounded-xl bg-slate-900 hover:bg-slate-850 disabled:opacity-40 disabled:hover:bg-slate-900 disabled:cursor-not-allowed px-3 py-2 text-xs font-black text-slate-200 border border-slate-800 transition-all active:scale-95 cursor-pointer shadow-md"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* VISTA B: INVENTARIO GENERAL */}
         {activeSubTab === "stock" && (
-          <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl">
+          <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl w-full overflow-hidden">
             <div className="text-left mb-6">
               <h3 className="text-lg font-black text-white">Stock Consolidado por Almacén</h3>
               <p className="text-xs text-slate-400 mt-1">Visualización del stock físico disponible a lo largo de toda nuestra red.</p>
@@ -832,7 +1299,7 @@ export default function ReportsPage() {
 
             {/* SECCION 1: MOVIMIENTOS DE STOCK */}
             {auditSubTab === "inventario" && (
-              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl space-y-4 w-full overflow-hidden">
                 <div className="text-left">
                   <h3 className="text-lg font-black text-white">Libro de Stock en Tiempo Real</h3>
                   <p className="text-xs text-slate-400 mt-1">
@@ -893,7 +1360,7 @@ export default function ReportsPage() {
 
             {/* SECCION 2: HISTORIAL DE VENTAS */}
             {auditSubTab === "ventas" && (
-              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl space-y-4 w-full overflow-hidden">
                 <div className="text-left">
                   <h3 className="text-lg font-black text-white">Bitácora de Transacciones de Venta</h3>
                   <p className="text-xs text-slate-400 mt-1">
@@ -956,7 +1423,7 @@ export default function ReportsPage() {
 
             {/* SECCION 3: HISTORIAL DE MODIFICACIONES DE CONFIGURACION */}
             {auditSubTab === "cambios" && (
-              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl space-y-4 w-full overflow-hidden">
                 <div className="text-left">
                   <h3 className="text-lg font-black text-white">Historial de Modificaciones de Sistema</h3>
                   <p className="text-xs text-slate-400 mt-1">
@@ -1034,7 +1501,7 @@ export default function ReportsPage() {
             <div className="grid gap-6 lg:grid-cols-3">
               
               {/* LISTADO DE TURNOS (Columna Izquierda 2/3 de ancho) */}
-              <div className="lg:col-span-2 rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-4">
+              <div className="lg:col-span-2 rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl space-y-4 w-full overflow-hidden">
                 <div className="text-left">
                   <h3 className="text-lg font-black text-white">Historial de Turnos de Caja</h3>
                   <p className="text-xs text-slate-400 mt-1">
@@ -1137,7 +1604,7 @@ export default function ReportsPage() {
               </div>
 
               {/* DETALLES DEL TURNO SELECCIONADO (Columna Derecha 1/3 de ancho) */}
-              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-6 shadow-xl space-y-6 h-fit">
+              <div className="rounded-3xl border border-slate-850 bg-slate-950 p-4 sm:p-6 shadow-xl space-y-6 h-fit w-full overflow-hidden">
                 {selectedShift ? (
                   <div className="space-y-6 text-left animate-fade-in">
                     <div>

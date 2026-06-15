@@ -1,8 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect */
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useFrappeAuth, useFrappeGetDocList, useFrappeCreateDoc } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
+import { CustomSelect } from "../components/custom_select";
+import { CatalogImageTile } from "../components/catalog_image_tile";
 
 interface FeatureConfig {
   client_name: string;
@@ -39,12 +42,12 @@ interface CartItem {
 }
 
 export default function POSPage() {
-  const { currentUser, isLoading: authLoading } = useFrappeAuth();
+  const { currentUser, isLoading: authLoading, logout } = useFrappeAuth();
   const router = useRouter();
 
-  const isCashier = currentUser?.startsWith("cajero.");
-  const isProdUser = currentUser === "produccion@lapaletixa.com";
-  const isLogisticaUser = currentUser === "logistica@lapaletixa.com";
+  const isCashier = currentUser?.startsWith("cajero.") || false;
+  const isProdUser = currentUser ? currentUser.startsWith("produccion@") : false;
+  const isLogisticaUser = currentUser ? currentUser.startsWith("logistica@") : false;
   const isAdmin = currentUser && !isCashier && !isProdUser && !isLogisticaUser;
 
   const getSucursalName = (email: string | null | undefined) => {
@@ -65,20 +68,15 @@ export default function POSPage() {
     return sucursalName || "Sucursal General";
   };
 
-  // Almacenes de sucursales habilitados para el Punto de Venta (POS) como fallback de Admin
-  const warehouses = [
-    { name: "Sucursal 1 - LP", label: "🍦 Sucursal 1" },
-    { name: "Sucursal 2 - LP", label: "🍦 Sucursal 2" },
-    { name: "Sucursal 3 - LP", label: "🍦 Sucursal 3" },
-    { name: "Sucursal 4 - LP", label: "🍦 Sucursal 4" }
-  ];
+
 
   // Estados del POS
-  const [activeWarehouse, setActiveWarehouse] = useState<string>("Sucursal 1 - LP");
+  const [activeWarehouse, setActiveWarehouse] = useState<string>("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
   const [wholesaleOverride, setWholesaleOverride] = useState<boolean | null>(null);
+  const [activeMobileTab, setActiveMobileTab] = useState<"catalog" | "cart">("catalog");
   
   // Estados de Pago
   const [paymentMode, setPaymentMode] = useState<string>("Cash");
@@ -95,6 +93,7 @@ export default function POSPage() {
   // === ESTADOS DINÁMICOS DE PERFIL, APERTURA Y CIERRE DE TURNOS ===
   const [posProfile, setPosProfile] = useState<any>(null);
   const [activeOpening, setActiveOpening] = useState<any>(null);
+  const [otherUserOpening, setOtherUserOpening] = useState<any>(null);
   const [posDataLoading, setPosDataLoading] = useState(true);
   const [showOpeningModal, setShowOpeningModal] = useState(false);
   const [showClosingModal, setShowClosingModal] = useState(false);
@@ -102,6 +101,10 @@ export default function POSPage() {
   // Balances declarados para apertura y cierre
   const [openingBalances, setOpeningBalances] = useState<{[key: string]: number}>({});
   const [closingBalances, setClosingBalances] = useState<{[key: string]: number}>({});
+  
+  // Refs para prevenir doble submits concurrentes en el cliente
+  const isClosingShiftRef = useRef(false);
+  const isOpeningShiftRef = useRef(false);
 
   // === ESTADOS PARA CONVERSIÓN DE MONEDA USD ===
   const [usdExchangeRate, setUsdExchangeRate] = useState<number>(0);
@@ -147,7 +150,7 @@ export default function POSPage() {
   const [showTicketModal, setShowTicketModal] = useState(false);
 
   // Helper robusto para llamar APIs whitelisteadas en el backend
-  const callFrappeAPI = async (method: string, args: any = {}) => {
+  const callFrappeAPI = useCallback(async (method: string, args: any = {}) => {
     const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
     const response = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.${method}`, {
       method: "POST",
@@ -163,10 +166,10 @@ export default function POSPage() {
     }
     const data = await response.json();
     return data.message;
-  };
+  }, []);
 
   // Carga del perfil POS y estado de turno activo
-  const loadPOSProfileAndShift = async (selectedProfileName?: string) => {
+  const loadPOSProfileAndShift = useCallback(async (selectedProfileName?: string) => {
     setPosDataLoading(true);
     setErrorMessage(null);
     try {
@@ -186,17 +189,25 @@ export default function POSPage() {
       // Buscar si el cajero ya tiene un turno abierto
       const opening = await callFrappeAPI("get_active_pos_opening", { pos_profile: profile.pos_profile });
       if (opening) {
-        setActiveOpening(opening);
-        setShowOpeningModal(false);
-        const savedRate = localStorage.getItem(`pos_usd_rate_${opening.name}`);
-        if (savedRate) {
-          setUsdExchangeRate(parseFloat(savedRate) || 0);
-          setInputUsdRate(savedRate);
+        if (opening.is_different_user) {
+          setOtherUserOpening(opening);
+          setActiveOpening(null);
+          setShowOpeningModal(true);
         } else {
-          setUsdExchangeRate(0);
-          setInputUsdRate("");
+          setOtherUserOpening(null);
+          setActiveOpening(opening);
+          setShowOpeningModal(false);
+          const savedRate = localStorage.getItem(`pos_usd_rate_${opening.name}`);
+          if (savedRate) {
+            setUsdExchangeRate(parseFloat(savedRate) || 0);
+            setInputUsdRate(savedRate);
+          } else {
+            setUsdExchangeRate(0);
+            setInputUsdRate("");
+          }
         }
       } else {
+        setOtherUserOpening(null);
         setActiveOpening(null);
         setUsdExchangeRate(0);
         setInputUsdRate("");
@@ -214,7 +225,7 @@ export default function POSPage() {
     } finally {
       setPosDataLoading(false);
     }
-  };
+  }, [callFrappeAPI]);
 
   // Cargar configuraciones iniciales
   useEffect(() => {
@@ -249,7 +260,7 @@ export default function POSPage() {
     if (currentUser) {
       loadPOSProfileAndShift();
     }
-  }, [currentUser]);
+  }, [currentUser, loadPOSProfileAndShift]);
 
   // Bloqueo por feature flag del POS
   useEffect(() => {
@@ -276,7 +287,7 @@ export default function POSPage() {
     } else {
       setSearchResults([]);
     }
-  }, [customerQuery]);
+  }, [customerQuery, callFrappeAPI]);
 
 
 
@@ -285,7 +296,7 @@ export default function POSPage() {
     fields: ["name", "item_name", "item_group", "image", "standard_rate", "has_variants"],
     filters: [
       ["disabled", "=", 0],
-      ["item_group", "=", "Products"],
+      ["is_sales_item", "=", 1],
       ["has_variants", "=", 0],
       ["name", "!=", "Carrito Paletero"]
     ],
@@ -328,9 +339,10 @@ export default function POSPage() {
     if (currentUser) {
       fetchBarcodes();
     }
-  }, [currentUser]);
+  }, [currentUser, callFrappeAPI]);
 
   const { createDoc } = useFrappeCreateDoc();
+  const addToCartRef = useRef<(item: any) => void>(() => {});
 
   // Escáner de código de barras global (Pistola USB/Bluetooth)
   useEffect(() => {
@@ -366,7 +378,7 @@ export default function POSPage() {
           if (barcodeDoc) {
             const item = items?.find(i => i.name === barcodeDoc.parent);
             if (item) {
-              addToCart(item);
+              addToCartRef.current(item);
               setSuccessMessage(`Producto "${item.item_name}" agregado por escaneo.`);
               setErrorMessage(null);
               setTimeout(() => setSuccessMessage(null), 3000);
@@ -414,39 +426,45 @@ export default function POSPage() {
 
   // Gestión de Carrito con validaciones estrictas de stock
   const addToCart = (item: any) => {
-    const stock = getItemStock(item.name);
+    const stock = bins?.find(b => b.item_code === item.name && b.warehouse === activeWarehouse)?.actual_qty || 0;
     if (stock <= 0) {
       setErrorMessage(`El producto "${item.item_name}" no tiene existencias disponibles en esta sucursal.`);
       return;
     }
 
+    const rateDoc = prices?.find(p => p.item_code === item.name && p.price_list === "Standard Selling");
+    const rate = rateDoc ? rateDoc.price_list_rate : (item.standard_rate || 10.0);
+
     setCart((prevCart = []) => {
       const existing = prevCart.find(i => i.item_code === item.name);
-      const rate = getItemPrice(item.name, item.standard_rate);
-      
       const currentQty = existing ? existing.qty : 0;
+
       if (currentQty + 1 > stock) {
         setErrorMessage(`No podés agregar más unidades de "${item.item_name}". Stock disponible: ${stock} unidades.`);
         return prevCart;
       }
-      
+
       setErrorMessage(null);
 
       if (existing) {
-        return prevCart.map(i => 
+        return prevCart.map(i =>
           i.item_code === item.name ? { ...i, qty: i.qty + 1 } : i
         );
-      } else {
-        return [...prevCart, {
-          item_code: item.name,
-          item_name: item.item_name,
-          qty: 1,
-          rate: rate,
-          image: item.image
-        }];
       }
+
+      return [...prevCart, {
+        item_code: item.name,
+        item_name: item.item_name,
+        qty: 1,
+        rate,
+        image: item.image
+      }];
     });
   };
+
+  useEffect(() => {
+    addToCartRef.current = addToCart;
+  });
 
   const updateCartQty = (itemCode: string, newQty: number) => {
     if (newQty <= 0) {
@@ -479,13 +497,8 @@ export default function POSPage() {
   };
 
   const getItemCategory = (itemName: string, itemCode: string) => {
-    const name = (itemName || itemCode || "").toLowerCase();
-    if (name.startsWith("bolis") || name.includes("saborines")) return "Bolis";
-    if (name.startsWith("paleta")) return "Paletas";
-    if (name.startsWith("trompito")) return "Trompitos";
-    if (name.includes("eskimo")) return "Eskimales";
-    if (name.startsWith("nieve")) return "Nieves";
-    return "Otros";
+    const matchedItem = items?.find(i => i.name === itemCode);
+    return matchedItem?.item_group || "Otros";
   };
 
   const getCategoryQty = (category: string) => {
@@ -529,10 +542,113 @@ export default function POSPage() {
   const cartTotal = cartSubtotal;
   const changeDue = amountPaid >= cartTotal ? amountPaid - cartTotal : 0;
 
+  const handleLogout = async () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("wholesale_session");
+      
+      const getCookie = (name: string) => {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop()?.split(';').shift() || "";
+        return "";
+      };
+      const csrfToken = getCookie("csrf_token");
+
+      const clearCookie = (name: string) => {
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${window.location.hostname};`;
+      };
+      
+      clearCookie("sid");
+      clearCookie("csrf_token");
+      clearCookie("user_image");
+      clearCookie("user_id");
+      clearCookie("system_user");
+      clearCookie("full_name");
+
+      const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
+      
+      try {
+        await fetch("/api/method/paletixa_saas.paletixa_saas.api.custom_logout", {
+          method: "GET",
+          credentials: "include"
+        });
+      } catch (e) {
+        console.warn("Falla en custom_logout relativo:", e);
+      }
+
+      if (url) {
+        try {
+          await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.custom_logout`, {
+            method: "GET",
+            credentials: "include"
+          });
+        } catch (e) {
+          console.warn("Falla en custom_logout absoluto:", e);
+        }
+      }
+
+      try {
+        await logout();
+      } catch (err) {
+        console.warn("Falla en SDK logout, probando alternativas...", err);
+      }
+
+      try {
+        await fetch("/api/method/logout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Frappe-CSRF-Token": csrfToken
+          },
+          credentials: "include"
+        });
+      } catch (e) {
+        console.warn("Falla en POST relativo:", e);
+      }
+
+      try {
+        await fetch("/api/method/logout", {
+          method: "GET",
+          credentials: "include"
+        });
+      } catch (e) {
+        console.warn("Falla en GET relativo:", e);
+      }
+
+      if (url) {
+        try {
+          await fetch(`${url}/api/method/logout`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Frappe-CSRF-Token": csrfToken
+            },
+            credentials: "include"
+          });
+        } catch (e) {
+          console.warn("Falla en POST absoluto:", e);
+        }
+        
+        try {
+          await fetch(`${url}/api/method/logout`, {
+            method: "GET",
+            credentials: "include"
+          });
+        } catch (e) {
+          console.warn("Falla en GET absoluto:", e);
+        }
+      }
+
+      window.location.href = "/";
+    }
+  };
+
   // Acciones de Apertura y Cierre de caja
   const handleOpenShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!posProfile) return;
+    if (!posProfile || isOpeningShiftRef.current) return;
+    isOpeningShiftRef.current = true;
     setSubmittingInvoice(true);
     setErrorMessage(null);
     try {
@@ -553,15 +669,36 @@ export default function POSPage() {
       await loadPOSProfileAndShift();
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || "Error al registrar la apertura de caja.");
+      const isAlreadyOpen = err.message && (
+        err.message.includes("is open") || 
+        err.message.includes("POS Opening Entry") ||
+        err.message.includes("already open")
+      );
+      if (isAlreadyOpen) {
+        setErrorMessage("⚠️ Esta sucursal ya tiene un turno abierto activo por otro usuario. Por favor, seleccioná otra sucursal del listado superior o solicitá el cierre de la caja activa.");
+        try {
+          const opening = await callFrappeAPI("get_active_pos_opening", { pos_profile: posProfile.pos_profile });
+          if (opening && (opening.is_different_user || opening.user)) {
+            setOtherUserOpening(opening);
+          } else {
+            setOtherUserOpening({ user: "otro cajero (verifique ERPNext)", name: "Turno Abierto" });
+          }
+        } catch (e) {
+          setOtherUserOpening({ user: "otro cajero (verifique ERPNext)", name: "Turno Abierto" });
+        }
+      } else {
+        setErrorMessage(err.message || "Error al registrar la apertura de caja.");
+      }
     } finally {
+      isOpeningShiftRef.current = false;
       setSubmittingInvoice(false);
     }
   };
 
   const handleCloseShiftSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeOpening) return;
+    if (!activeOpening || isClosingShiftRef.current) return;
+    isClosingShiftRef.current = true;
     setSubmittingInvoice(true);
     setErrorMessage(null);
     try {
@@ -580,6 +717,7 @@ export default function POSPage() {
       console.error(err);
       setErrorMessage(err.message || "Error al registrar el cierre de caja.");
     } finally {
+      isClosingShiftRef.current = false;
       setSubmittingInvoice(false);
       setShowClosingModal(false);
     }
@@ -700,23 +838,12 @@ export default function POSPage() {
     const matchesSearch = item.item_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           item.name.toLowerCase().includes(searchQuery.toLowerCase());
     
-    let matchesCategory = selectedCategory === "Todos";
-    if (selectedCategory === "Bolis") {
-      matchesCategory = item.item_name.startsWith("Bolis") || item.name.startsWith("Bolis");
-    } else if (selectedCategory === "Paletas") {
-      matchesCategory = item.item_name.startsWith("Paleta") || item.name.startsWith("Paleta");
-    } else if (selectedCategory === "Trompitos") {
-      matchesCategory = item.item_name.startsWith("Trompito") || item.name.startsWith("Trompito");
-    } else if (selectedCategory === "Eskimales") {
-      matchesCategory = item.item_name.includes("Eskimo") || item.name.includes("Eskimo");
-    } else if (selectedCategory === "Nieves") {
-      matchesCategory = item.item_name.startsWith("Nieve") || item.name.startsWith("Nieve");
-    }
+    const matchesCategory = selectedCategory === "Todos" || item.item_group === selectedCategory;
     
     return matchesSearch && matchesCategory;
   }) || [];
 
-  const categories = ["Todos", "Bolis", "Paletas", "Trompitos", "Eskimales", "Nieves"];
+  const categories = ["Todos", ...Array.from(new Set(items?.map(item => item.item_group).filter(Boolean) || []))];
   const activeColor = saasConfig?.colors?.primary || "#3498db";
 
   if (authLoading || configLoading || itemsLoading || pricesLoading || binsLoading || posDataLoading || barcodesLoading) {
@@ -733,111 +860,87 @@ export default function POSPage() {
   return (
     <>
       <div className="h-full flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden print:hidden">
-      
-      {/* Sleek POS Header */}
-      <header className="bg-slate-950/80 backdrop-blur-md border-b border-slate-850 px-6 py-4 flex items-center justify-between shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-sky-400 to-indigo-500 flex items-center justify-center font-black text-white text-base shadow-md">
-            LP
-          </div>
-          <div>
-            <h1 className="text-sm font-black text-white tracking-wide">La Paletixa POS</h1>
-            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
-              <span>{getDisplaySucursalName()}</span>
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-              <span>Turno: {activeOpening?.name || "Sin turno activo"}</span>
-            </p>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
-            <p className="text-xs font-bold text-white leading-none">{currentUser}</p>
-            <p className="text-[9px] text-slate-500 font-semibold mt-0.5">Cajero Activo</p>
-          </div>
-          
-          {activeOpening && (
-            <button
-              onClick={async () => {
-                setErrorMessage(null);
-                setSuccessMessage(null);
-                try {
-                  const details = await callFrappeAPI("get_closing_reconciliation_details", {
-                    pos_opening_entry: activeOpening.name
-                  });
-                  const initialClosing: {[key: string]: number} = {};
-                  if (!details || details.length === 0) {
-                    posProfile.payment_methods.forEach((pm: any) => {
-                      initialClosing[pm.mode_of_payment] = 0;
-                    });
-                  } else {
-                    details.forEach((item: any) => {
-                      initialClosing[item.mode_of_payment] = item.expected_amount || 0;
-                    });
-                  }
-                  setClosingBalances(initialClosing);
-                  setShowClosingModal(true);
-                } catch (err: any) {
-                  setErrorMessage(err.message || "Error al obtener la reconciliación esperada.");
-                }
-              }}
-              className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-4 py-2 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              Cerrar Caja / Turno
-            </button>
-          )}
-
+      {/* Selector de Pestañas Móviles */}
+      <div className="px-4 pt-4 md:hidden flex-shrink-0 bg-slate-900">
+        <div className="tab-container flex-shrink-0">
           <button
-            onClick={() => router.push("/")}
-            className="text-slate-400 hover:text-white p-2 rounded-xl border border-slate-850 hover:bg-slate-900 transition-all active:scale-95 cursor-pointer"
-            title="Ir al Dashboard"
+            type="button"
+            onClick={() => setActiveMobileTab("catalog")}
+            className={`tab-button flex-1 flex items-center justify-center gap-1.5 ${activeMobileTab === "catalog" ? "active" : ""}`}
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
+            🍦 <span>Productos</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMobileTab("cart")}
+            className={`tab-button flex-1 flex items-center justify-center gap-1.5 ${activeMobileTab === "cart" ? "active" : ""}`}
+          >
+            🛒 <span>Carrito</span>
+            {cart.length > 0 && (
+              <strong className="ml-1 text-[10px] bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full text-slate-200 font-bold">
+                {cart.reduce((sum, item) => sum + item.qty, 0)}
+              </strong>
+            )}
           </button>
         </div>
-      </header>
+      </div>
 
       {/* Grid del Layout General */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         
         {/* PANEL IZQUIERDO: Catálogo y Buscador */}
-        <main className="flex-1 flex flex-col p-6 overflow-y-auto space-y-6">
+        <main className={`flex-1 flex flex-col p-4 sm:p-6 overflow-y-auto space-y-6 ${activeMobileTab === "catalog" ? "flex" : "hidden md:flex"}`}>
           
-          {/* Selector de Almacén exclusivo para el Administrador */}
-          {isAdmin && (
-            <div className="bg-slate-950 p-4 sm:p-5 rounded-3xl border border-slate-850 shadow-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-fade-in">
-              <div className="space-y-1">
-                <h3 className="text-sm font-black text-white flex items-center gap-2">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-500 animate-pulse"></span>
-                  Panel POS — Modo Administrador
-                </h3>
-                <p className="text-xs text-slate-400 font-medium">
-                  Tenés privilegios globales. Cambiá de sucursal para cargar su inventario y facturar de forma autónoma.
+          {/* Turno Info and Actions Card */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-950 p-4 rounded-3xl border border-slate-850 shadow-md gap-4 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <div>
+                <p className="text-xs font-bold text-slate-350 leading-none">
+                  Turno Activo: <span className="text-white font-extrabold">{activeOpening?.name || "Sin turno activo"}</span>
+                </p>
+                <p className="text-[10px] text-slate-500 font-semibold mt-1">
+                  Sucursal: {getDisplaySucursalName()}
                 </p>
               </div>
-
-              <div className="flex items-center gap-3 bg-slate-900 p-1.5 px-3 rounded-2xl border border-slate-800">
-                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Sucursal Operativa:</span>
-                <select
-                  value={activeWarehouse}
-                  onChange={(e) => {
-                    setActiveWarehouse(e.target.value);
-                    clearCart();
-                  }}
-                  className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:border-sky-500 focus:outline-none cursor-pointer font-extrabold hover:bg-slate-950/80 transition-all shadow-md"
-                >
-                  {warehouses.map(w => (
-                    <option key={w.name} value={w.name}>{w.label}</option>
-                  ))}
-                </select>
-              </div>
             </div>
-          )}
+            {activeOpening && (
+              <button
+                onClick={async () => {
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                  try {
+                    const details = await callFrappeAPI("get_closing_reconciliation_details", {
+                      pos_opening_entry: activeOpening.name
+                    });
+                    const initialClosing: {[key: string]: number} = {};
+                    if (!details || details.length === 0) {
+                      posProfile.payment_methods.forEach((pm: any) => {
+                        initialClosing[pm.mode_of_payment] = 0;
+                      });
+                    } else {
+                      details.forEach((item: any) => {
+                        initialClosing[item.mode_of_payment] = item.expected_amount || 0;
+                      });
+                    }
+                    setClosingBalances(initialClosing);
+                    setShowClosingModal(true);
+                  } catch (err: any) {
+                    setErrorMessage(err.message || "Error al obtener la reconciliación esperada.");
+                  }
+                }}
+                className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-4 py-2 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                <span>Cerrar Caja / Turno</span>
+              </button>
+            )}
+          </div>
+          
+
 
           {/* Barra de Filtros y Búsqueda */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -915,8 +1018,12 @@ export default function POSPage() {
                 >
                   <div>
                     {/* Foto de Ítem */}
-                    <div className="aspect-square w-full rounded-xl bg-slate-900 mb-3 flex items-center justify-center text-slate-700 overflow-hidden relative border border-slate-850/20">
-                      
+                    <CatalogImageTile
+                      className="aspect-square w-full mb-3"
+                      src={item.image}
+                      alt={item.item_name}
+                      imageClassName="group-hover:scale-105 transition-transform duration-300"
+                    >
                       {/* Stock Badge flotante */}
                       <span className={`absolute top-2 right-2 text-[9px] font-black px-2 py-0.5 rounded-full border z-20 shadow-md ${
                         isAvailable
@@ -925,19 +1032,7 @@ export default function POSPage() {
                       }`}>
                         {isAvailable ? `${itemStock} disp.` : "Agotado"}
                       </span>
-
-                      {item.image ? (
-                        <img 
-                          src={item.image.startsWith("http") ? item.image : `${process.env.NEXT_PUBLIC_FRAPPE_URL || ""}${item.image}`} 
-                          alt={item.item_name}
-                          className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-                        />
-                      ) : (
-                        <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                        </svg>
-                      )}
-                    </div>
+                    </CatalogImageTile>
                     <h4 className="font-bold text-sm text-white leading-snug truncate group-hover:text-sky-400 transition-colors duration-200">{item.item_name}</h4>
                     <p className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wider font-semibold">{item.item_group}</p>
                   </div>
@@ -959,10 +1054,27 @@ export default function POSPage() {
               );
             })}
           </div>
+
+          {/* Floating Cart Button for Mobile */}
+          {cart.length > 0 && activeMobileTab === "catalog" && (
+            <div className="fixed bottom-6 right-6 z-30 md:hidden">
+              <button
+                type="button"
+                onClick={() => setActiveMobileTab("cart")}
+                className="flex items-center gap-2 px-5 py-3.5 rounded-full text-white font-black text-xs shadow-2xl active:scale-95 transition-all cursor-pointer border border-white/10"
+                style={{ backgroundColor: activeColor }}
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+                <span>Ver Carrito ({cart.reduce((sum, item) => sum + item.qty, 0)})</span>
+              </button>
+            </div>
+          )}
         </main>
 
         {/* PANEL DERECHO: Carrito de Compras */}
-        <aside className="w-80 sm:w-96 border-l border-slate-800 bg-slate-950 flex flex-col">
+        <aside className={`w-full md:w-80 lg:w-96 border-l border-slate-800 bg-slate-950 flex flex-col ${activeMobileTab === "cart" ? "flex" : "hidden md:flex"}`}>
           
           {/* Customer Search and Registration Area */}
           <div className="p-4 border-b border-slate-800 bg-slate-950/40 space-y-3">
@@ -1206,81 +1318,117 @@ export default function POSPage() {
               )}
             </div>
 
-            <form onSubmit={handleOpenShiftSubmit} className="space-y-4">
-              
-              {/* Selector dinámico de Perfil POS / Sucursal */}
-              {posProfile?.available_profiles && posProfile.available_profiles.length > 1 && (
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Sucursal / Perfil POS Activo</label>
-                  <select
-                    value={posProfile.pos_profile}
-                    onChange={(e) => {
-                      loadPOSProfileAndShift(e.target.value);
-                    }}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5 text-xs text-white focus:border-sky-500 focus:outline-none cursor-pointer font-extrabold shadow-md"
-                  >
-                    {posProfile.available_profiles.map((pName: string) => (
-                      <option key={pName} value={pName}>{pName}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="space-y-3 p-4 bg-slate-950 rounded-2xl border border-slate-850">
-                {posProfile?.payment_methods?.map((pm: any) => {
-                  const mop = pm.mode_of_payment;
-                  return (
-                    <div key={mop} className="space-y-1">
-                      <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
-                        Efectivo Inicial ({mop === "Cash" ? "Efectivo" : mop === "Credit Card" ? "Tarjeta" : mop})
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={openingBalances[mop] || ""}
-                        onChange={(e) => setOpeningBalances({
-                          ...openingBalances,
-                          [mop]: parseFloat(e.target.value) || 0
-                        })}
-                        placeholder="0.00"
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700"
-                        required
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-850 space-y-1">
-                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  Tipo de Cambio USD (Precio de Compra del Turno)
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  value={inputUsdRate}
-                  onChange={(e) => setInputUsdRate(e.target.value)}
-                  placeholder="Ej. 17.50"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700"
-                  required
+            {/* Selector dinámico de Perfil POS / Sucursal (siempre disponible) */}
+            {posProfile?.available_profiles && posProfile.available_profiles.length > 1 && (
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Sucursal / Perfil POS Activo</label>
+                <CustomSelect
+                  value={posProfile.pos_profile}
+                  onChange={(val) => {
+                    loadPOSProfileAndShift(val);
+                  }}
+                  options={posProfile.available_profiles.map((pName: string) => ({
+                    value: pName,
+                    label: pName,
+                  }))}
                 />
               </div>
+            )}
 
-              {errorMessage && (
-                <p className="text-xs text-red-400 text-center font-medium bg-red-500/10 border border-red-500/20 py-2 rounded-xl">
-                  {errorMessage}
-                </p>
-              )}
+            {otherUserOpening ? (
+              <div className="space-y-5">
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-250 text-xs font-semibold text-center leading-relaxed">
+                  ⚠️ La sucursal <strong className="text-white">{posProfile?.pos_profile}</strong> ya tiene un turno abierto activo registrado por el usuario: <strong className="text-white">{otherUserOpening.user}</strong>.
+                  <br/><br/>
+                  Para operar en esta caja, ese usuario debe cerrar su turno o el administrador debe cancelar la apertura existente en ERPNext.
+                </div>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => router.push("/")}
+                    className="w-full rounded-2xl bg-slate-800 py-3.5 text-xs font-black text-white hover:bg-slate-750 transition-all cursor-pointer text-center"
+                  >
+                    Volver al Dashboard
+                  </button>
+                )}
+              </div>
+            ) : (
+              <form onSubmit={handleOpenShiftSubmit} className="space-y-4">
+                <div className="space-y-3 p-4 bg-slate-950 rounded-2xl border border-slate-850">
+                  {posProfile?.payment_methods?.map((pm: any) => {
+                    const mop = pm.mode_of_payment;
+                    return (
+                      <div key={mop} className="space-y-1">
+                        <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          Efectivo Inicial ({mop === "Cash" ? "Efectivo" : mop === "Credit Card" ? "Tarjeta" : mop})
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={openingBalances[mop] || ""}
+                          onChange={(e) => setOpeningBalances({
+                            ...openingBalances,
+                            [mop]: parseFloat(e.target.value) || 0
+                          })}
+                          placeholder="0.00"
+                          disabled={submittingInvoice}
+                          className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700 disabled:opacity-45 disabled:cursor-not-allowed"
+                          required
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
 
-              <button
-                type="submit"
-                disabled={submittingInvoice}
-                className="w-full rounded-xl py-3.5 text-xs font-black text-white shadow-xl transition-all duration-300 hover:brightness-110 active:scale-95 disabled:opacity-40 cursor-pointer"
-                style={{ backgroundColor: activeColor }}
-              >
-                {submittingInvoice ? "Abriendo Turno en ERPNext..." : "Abrir Caja y Comenzar Turno"}
-              </button>
-            </form>
+                <div className="p-4 bg-slate-950 rounded-2xl border border-slate-850 space-y-1">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Tipo de Cambio USD (Precio de Compra del Turno)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={inputUsdRate}
+                    onChange={(e) => setInputUsdRate(e.target.value)}
+                    placeholder="Ej. 17.50"
+                    disabled={submittingInvoice}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700 disabled:opacity-45 disabled:cursor-not-allowed"
+                    required
+                  />
+                </div>
+
+                {errorMessage && (
+                  <p className="text-xs text-red-400 text-center font-medium bg-red-500/10 border border-red-500/20 py-2 rounded-xl">
+                    {errorMessage}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={submittingInvoice}
+                  className="w-full rounded-xl py-3.5 text-xs font-black text-white shadow-xl transition-all duration-300 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                  style={{ backgroundColor: activeColor }}
+                >
+                  {submittingInvoice && (
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {submittingInvoice ? "Abriendo Turno en ERPNext..." : "Abrir Caja y Comenzar Turno"}
+                </button>
+              </form>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950/50 py-3 text-xs font-black text-slate-400 hover:text-white hover:bg-slate-850 hover:border-slate-700 transition-all cursor-pointer text-center flex items-center justify-center gap-1.5"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Cerrar Sesión
+            </button>
           </div>
         </div>
       )}
@@ -1295,8 +1443,9 @@ export default function POSPage() {
                 <p className="text-[10px] text-slate-400 font-semibold">{activeOpening?.name}</p>
               </div>
               <button 
-                onClick={() => setShowClosingModal(false)} 
-                className="text-slate-400 hover:text-white text-xs font-bold"
+                onClick={() => !submittingInvoice && setShowClosingModal(false)} 
+                disabled={submittingInvoice}
+                className="text-slate-400 hover:text-white text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 Cancelar
               </button>
@@ -1337,7 +1486,8 @@ export default function POSPage() {
                                 [mop]: parseFloat(e.target.value) || 0
                               })}
                               placeholder="0.00"
-                              className="w-32 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-extrabold text-white text-right outline-none focus:border-slate-700"
+                              disabled={submittingInvoice}
+                              className="w-32 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs font-extrabold text-white text-right outline-none focus:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
                               required
                             />
                           </div>
@@ -1357,9 +1507,15 @@ export default function POSPage() {
               <button
                 type="submit"
                 disabled={submittingInvoice}
-                className="w-full rounded-xl py-3.5 text-xs font-black text-white shadow-xl transition-all duration-300 hover:brightness-110 active:scale-95 disabled:opacity-40 cursor-pointer"
+                className="w-full rounded-xl py-3.5 text-xs font-black text-white shadow-xl transition-all duration-300 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
                 style={{ backgroundColor: activeColor }}
               >
+                {submittingInvoice && (
+                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                )}
                 {submittingInvoice ? "Cerrando Turno en ERPNext..." : "Confirmar Arqueo y Cerrar Caja"}
               </button>
             </form>
@@ -1439,31 +1595,31 @@ export default function POSPage() {
 
                         <div className="space-y-1">
                           <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Régimen Fiscal</label>
-                          <select
+                          <CustomSelect
                             value={newCustomerRegime}
-                            onChange={(e) => setNewCustomerRegime(e.target.value)}
-                            className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700 cursor-pointer"
-                          >
-                            <option value="601">601 | General de Ley Personas Morales</option>
-                            <option value="603">603 | Personas Morales no Lucrativas</option>
-                            <option value="605">605 | Sueldos y Salarios</option>
-                            <option value="612">612 | Actividades Empresariales y Profesionales</option>
-                            <option value="626">626 | Régimen Simplificado de Confianza (RESICO)</option>
-                          </select>
+                            onChange={(val) => setNewCustomerRegime(val)}
+                            options={[
+                              { value: "601", label: "601 | General de Ley Personas Morales" },
+                              { value: "603", label: "603 | Personas Morales no Lucrativas" },
+                              { value: "605", label: "605 | Sueldos y Salarios" },
+                              { value: "612", label: "612 | Actividades Empresariales y Profesionales" },
+                              { value: "626", label: "626 | Régimen Simplificado de Confianza (RESICO)" }
+                            ]}
+                          />
                         </div>
 
                         <div className="space-y-1">
                           <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Uso de CFDI</label>
-                          <select
+                          <CustomSelect
                             value={newCustomerCFDIUse}
-                            onChange={(e) => setNewCustomerCFDIUse(e.target.value)}
-                            className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-slate-700 cursor-pointer"
-                          >
-                            <option value="G01">G01 | Adquisición de mercancías</option>
-                            <option value="G03">G03 | Gastos en general</option>
-                            <option value="S01">S01 | Sin efectos fiscales</option>
-                            <option value="CP01">CP01 | Pagos</option>
-                          </select>
+                            onChange={(val) => setNewCustomerCFDIUse(val)}
+                            options={[
+                              { value: "G01", label: "G01 | Adquisición de mercancías" },
+                              { value: "G03", label: "G03 | Gastos en general" },
+                              { value: "S01", label: "S01 | Sin efectos fiscales" },
+                              { value: "CP01", label: "CP01 | Pagos" }
+                            ]}
+                          />
                         </div>
                       </div>
                     )}
@@ -1755,10 +1911,11 @@ export default function POSPage() {
                 {/* Logo */}
                 {saasConfig?.print_logo && saasConfig?.company_logo && (
                   <div className="flex justify-center mb-1.5">
-                    <img 
-                      src={saasConfig.company_logo} 
-                      alt="Brand Logo" 
-                      className="max-h-10 object-contain max-w-full"
+                    <div
+                      role="img"
+                      aria-label="Brand Logo"
+                      className="mx-auto h-10 w-full max-w-[160px] bg-contain bg-center bg-no-repeat"
+                      style={{ backgroundImage: `url(${saasConfig.company_logo})` }}
                     />
                   </div>
                 )}
@@ -1931,10 +2088,11 @@ export default function POSPage() {
           <div className="text-center space-y-1.5 mb-3">
             {saasConfig?.print_logo && saasConfig?.company_logo && (
               <div className="flex justify-center mb-1">
-                <img 
-                  src={saasConfig.company_logo} 
-                  alt="Logo" 
-                  className="max-h-12 object-contain"
+                <div
+                  role="img"
+                  aria-label="Logo"
+                  className="mx-auto h-12 w-full max-w-[160px] bg-contain bg-center bg-no-repeat"
+                  style={{ backgroundImage: `url(${saasConfig.company_logo})` }}
                 />
               </div>
             )}

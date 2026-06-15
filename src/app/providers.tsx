@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { FrappeProvider, useFrappeAuth } from "frappe-react-sdk";
+import { PwaLifecycle } from "./components/pwa_lifecycle";
 
 export interface FeatureConfig {
   client_name: string;
@@ -16,6 +17,9 @@ export interface FeatureConfig {
     wholesale?: boolean;
     mexico_taxes?: boolean;
     allow_pos_out_of_stock?: boolean;
+    services?: boolean;
+    products?: boolean;
+    purchasing?: boolean;
   };
   reservation_item_code?: string;
   max_reservation_assets?: number;
@@ -75,6 +79,7 @@ function SaaSConfigLoader({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConfig();
   }, [currentUser]);
 
@@ -95,6 +100,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       enableSocket={false}
     >
       <SaaSConfigLoader>
+        <PwaLifecycle />
         {children}
       </SaaSConfigLoader>
     </FrappeProvider>

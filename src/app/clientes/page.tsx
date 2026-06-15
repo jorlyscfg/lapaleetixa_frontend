@@ -1,9 +1,29 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useFrappeAuth } from "frappe-react-sdk";
 import { useRouter } from "next/navigation";
-import { ExpressCustomerModal } from "../puntos-fijos/puntos_fijos_page";
+import { ExpressCustomerModal } from "../mayoristas/mayoristas_page";
+
+interface HistoryOrder {
+  name: string;
+  transaction_date: string;
+  grand_total: number;
+  status: string;
+}
+
+interface HistoryInvoice {
+  name: string;
+  posting_date: string;
+  grand_total: number;
+  outstanding_amount: number;
+  status: string;
+}
+
+interface HistoryData {
+  orders?: HistoryOrder[];
+  invoices?: HistoryInvoice[];
+}
 
 interface Customer {
   name: string;
@@ -30,18 +50,17 @@ export default function ClientesPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [saasConfig, setSaasConfig] = useState<FeatureConfig | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   // Modales
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedHistoryCustomer, setSelectedHistoryCustomer] = useState<Customer | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyData, setHistoryData] = useState<any>(null);
+  const [historyData, setHistoryData] = useState<HistoryData | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Helper para interactuar con Frappe
-  const callFrappeAPI = async (method: string, args: any = {}) => {
+  const callFrappeAPI = async <TResponse, TArgs extends Record<string, unknown> = Record<string, unknown>>(method: string, args: TArgs = {} as TArgs): Promise<TResponse> => {
     const url = process.env.NEXT_PUBLIC_FRAPPE_URL || "";
     const response = await fetch(`${url}/api/method/paletixa_saas.paletixa_saas.api.${method}`, {
       method: "POST",
@@ -55,7 +74,7 @@ export default function ClientesPage() {
       const err = await response.json();
       throw new Error(err._server_messages ? JSON.parse(err._server_messages).join("\n") : err.message || "Error al procesar la solicitud.");
     }
-    const data = await response.json();
+    const data = await response.json() as { message: TResponse };
     return data.message;
   };
 
@@ -85,41 +104,42 @@ export default function ClientesPage() {
     if (currentUser) {
       const userEmail = currentUser;
       const isCashier = userEmail.startsWith("cajero.");
-      const isProdUser = userEmail === "produccion@lapaletixa.com";
-      const isLogisticaUser = userEmail === "logistica@lapaletixa.com";
+      const isProdUser = userEmail ? userEmail.startsWith("produccion@") : false;
+      const isLogisticaUser = userEmail ? userEmail.startsWith("logistica@") : false;
       const isStaff = isCashier || isProdUser || isLogisticaUser || userEmail === "Administrator" || userEmail.includes("admin");
-      
-      const isUserAdmin = userEmail === "Administrator" || userEmail.includes("admin") || userEmail.startsWith("admin.");
-      setIsAdmin(!!isUserAdmin);
 
       if (!isStaff) {
         // Redirigir si es cliente normal
-        router.push("/puntos-fijos");
+        router.push("/mayoristas");
       }
     } else if (!authLoading) {
       router.push("/");
     }
   }, [currentUser, authLoading, router]);
 
+  const isAdmin = !!(currentUser && (currentUser === "Administrator" || currentUser.includes("admin") || currentUser.startsWith("admin.")));
+
   // Cargar clientes de la base de datos
-  const fetchCustomers = async () => {
+  const fetchCustomers = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await callFrappeAPI("get_all_customers");
+      const res = await callFrappeAPI<Customer[]>("get_all_customers");
       setCustomers(res || []);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(err);
-      setErrorMsg(err.message || "Error al cargar la lista de clientes.");
+      setErrorMsg(message || "Error al cargar la lista de clientes.");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (currentUser && isAdmin) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchCustomers();
     }
-  }, [currentUser, isAdmin]);
+  }, [currentUser, isAdmin, fetchCustomers]);
 
   // Cargar historial del cliente seleccionado
   const loadHistory = async (customer: Customer) => {
@@ -127,13 +147,14 @@ export default function ClientesPage() {
     setHistoryLoading(true);
     setHistoryData(null);
     try {
-      const res = await callFrappeAPI("get_customer_orders_history", {
+      const res = await callFrappeAPI<HistoryData>("get_customer_orders_history", {
         customer_name: customer.name
       });
       setHistoryData(res);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error(err);
-      setErrorMsg(err.message || "Error al obtener historial del cliente.");
+      setErrorMsg(message || "Error al obtener historial del cliente.");
     } finally {
       setHistoryLoading(false);
     }
@@ -154,7 +175,7 @@ export default function ClientesPage() {
       normalizedPhone = "52" + phone;
     }
     
-    const portalUrl = typeof window !== "undefined" ? `${window.location.origin}/puntos-fijos` : "";
+    const portalUrl = typeof window !== "undefined" ? `${window.location.origin}/mayoristas` : "";
     const pin = customer.custom_wholesale_access_pin || "------";
     const text = encodeURIComponent(
       `Hola *${customer.customer_name}*, ya podés realizar tus pedidos mayoristas ingresando a nuestro portal autogestionado: ${portalUrl}\n\n📱 *Celular registrado:* ${customer.mobile_no}\n🔑 *PIN de acceso:* ${pin}`
@@ -185,47 +206,6 @@ export default function ClientesPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden">
-      {/* Header Premium */}
-      <header className="bg-slate-950/80 backdrop-blur-md border-b border-slate-850 px-6 py-4 flex items-center justify-between shadow-lg sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div 
-            className="h-10 w-10 rounded-xl flex items-center justify-center text-white font-black text-base shadow-md"
-            style={{ backgroundColor: primaryColor }}
-          >
-            CL
-          </div>
-          <div>
-            <h1 className="text-base font-black text-white tracking-wide">Gestión de Clientes Mayoristas</h1>
-            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-              {saasConfig?.client_name || "La Paletixa"} — Panel de Operación
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="rounded-xl px-4 py-2 text-xs font-black text-white shadow-md active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
-            style={{ backgroundColor: primaryColor }}
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Registrar Cliente
-          </button>
-          
-          <button
-            onClick={() => router.push("/")}
-            className="text-slate-400 hover:text-white p-2 rounded-xl border border-slate-850 hover:bg-slate-900 transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 font-bold text-xs"
-            title="Ir al Dashboard"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
-          </button>
-        </div>
-      </header>
-
       {/* Main Content Area */}
       <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 overflow-y-auto pb-32">
         {errorMsg && (
@@ -243,8 +223,8 @@ export default function ClientesPage() {
         )}
 
         {/* Buscador y Filtros */}
-        <div className="bg-slate-950 p-6 rounded-3xl border border-slate-850 shadow-xl space-y-4">
-          <div className="relative">
+        <div className="bg-slate-950 p-4 sm:p-6 rounded-3xl border border-slate-850 shadow-xl flex flex-row items-center gap-3 sm:gap-4">
+          <div className="relative flex-1">
             <input
               type="text"
               value={searchQuery}
@@ -258,6 +238,16 @@ export default function ClientesPage() {
               </svg>
             </div>
           </div>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="rounded-xl px-4 sm:px-5 py-3.5 text-xs font-black text-white shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap"
+            style={{ backgroundColor: primaryColor }}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            <span>Registrar Cliente</span>
+          </button>
         </div>
 
         {/* Listado en Grilla de Tarjetas */}
@@ -316,14 +306,15 @@ export default function ClientesPage() {
                         try {
                           setErrorMsg(null);
                           setSuccessMsg(null);
-                          const res = await callFrappeAPI("generate_customer_access_pin", { customer_name: c.name });
+                          const res = await callFrappeAPI<{ success: boolean; pin: string }>("generate_customer_access_pin", { customer_name: c.name });
                           if (res && res.success) {
                             setSuccessMsg(`¡PIN generado con éxito para ${c.customer_name}! PIN: ${res.pin}`);
                             fetchCustomers();
                           }
-                        } catch (err: any) {
+                        } catch (err: unknown) {
+                          const message = err instanceof Error ? err.message : String(err);
                           console.error(err);
-                          setErrorMsg(err.message || "Error al generar PIN.");
+                          setErrorMsg(message || "Error al generar PIN.");
                         }
                       }}
                       className="text-[10px] bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-2 py-1 rounded-xl transition-all cursor-pointer font-black"
@@ -399,7 +390,7 @@ export default function ClientesPage() {
         onClose={() => setShowAddModal(false)}
         primaryColor={primaryColor}
         callFrappeAPI={callFrappeAPI}
-        onSelectCustomer={(customerName, customerId) => {
+        onSelectCustomer={(customerName) => {
           setSuccessMsg(`Cliente "${customerName}" registrado y seleccionado con éxito.`);
           fetchCustomers();
         }}
@@ -442,7 +433,7 @@ export default function ClientesPage() {
                       No hay pedidos registrados para este cliente.
                     </p>
                   ) : (
-                    <div className="border border-slate-850 rounded-2xl overflow-hidden bg-slate-950/30">
+                    <div className="border border-slate-850 rounded-2xl overflow-x-auto bg-slate-950/30">
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-slate-950 border-b border-slate-850 text-[10px] font-black uppercase text-slate-400 tracking-wider">
@@ -453,7 +444,7 @@ export default function ClientesPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-850 text-xs font-semibold text-slate-300">
-                          {historyData?.orders?.map((o: any) => (
+                          {historyData?.orders?.map((o) => (
                             <tr key={o.name} className="hover:bg-slate-900/40">
                               <td className="px-4 py-3 font-bold text-white">{o.name}</td>
                               <td className="px-4 py-3 text-slate-400">{o.transaction_date}</td>
@@ -485,7 +476,7 @@ export default function ClientesPage() {
                       No hay facturas emitidas para este cliente.
                     </p>
                   ) : (
-                    <div className="border border-slate-850 rounded-2xl overflow-hidden bg-slate-950/30">
+                    <div className="border border-slate-850 rounded-2xl overflow-x-auto bg-slate-950/30">
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-slate-950 border-b border-slate-850 text-[10px] font-black uppercase text-slate-400 tracking-wider">
@@ -497,7 +488,7 @@ export default function ClientesPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-850 text-xs font-semibold text-slate-300">
-                          {historyData?.invoices?.map((i: any) => (
+                          {historyData?.invoices?.map((i) => (
                             <tr key={i.name} className="hover:bg-slate-900/40">
                               <td className="px-4 py-3 font-bold text-white">{i.name}</td>
                               <td className="px-4 py-3 text-slate-400">{i.posting_date}</td>
