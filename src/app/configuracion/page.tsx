@@ -59,7 +59,13 @@ export default function ConfiguracionPage() {
   const isCashier = currentUser?.startsWith("cajero.");
   const isProdUser = currentUser ? currentUser.startsWith("produccion@") : false;
   const isLogisticaUser = currentUser ? currentUser.startsWith("logistica@") : false;
-  const isAdmin = currentUser && !isCashier && !isProdUser && !isLogisticaUser;
+  const isTenantAdmin = !!(
+    currentUser &&
+    !isCashier &&
+    !isProdUser &&
+    !isLogisticaUser &&
+    ((currentUser.startsWith("admin@") && currentUser !== "admin@jegdev.com") || currentUser.startsWith("admin."))
+  );
 
   // Configuración original y estados de edición locales
   const [saasConfig, setSaasConfig] = useState<FeatureConfig | null>(null);
@@ -238,7 +244,7 @@ export default function ConfiguracionPage() {
   const { data: branchesAndCashiersRaw, error: branchesError, mutate: mutateBranches } = useFrappeGetCall(
     "paletixa_saas.paletixa_saas.api.get_branches_and_cashiers",
     {},
-    currentUser && isAdmin ? undefined : null
+    currentUser && isTenantAdmin ? undefined : null
   );
 
   const { call: createNewBranchWithCashiers } = useFrappePostCall(
@@ -252,7 +258,7 @@ export default function ConfiguracionPage() {
   const { data: usersWithRolesRaw, mutate: mutateUsersWithRoles } = useFrappeGetCall(
     "paletixa_saas.paletixa_saas.api.get_users_with_roles",
     {},
-    currentUser && isAdmin ? undefined : null
+    currentUser && isTenantAdmin ? undefined : null
   );
 
   const { call: createOrUpdateUser } = useFrappePostCall(
@@ -489,14 +495,14 @@ export default function ConfiguracionPage() {
     }
   }, [saasConfig]);
 
-  // Redirigir si no es Admin
+  // Redirigir si no es tenant admin
   useEffect(() => {
     if (!authLoading && !currentUser) {
       router.push("/");
-    } else if (!authLoading && currentUser && !isAdmin) {
+    } else if (!authLoading && currentUser && !isTenantAdmin) {
       router.push("/");
     }
-  }, [currentUser, authLoading, isAdmin, router]);
+  }, [currentUser, authLoading, isTenantAdmin, router]);
 
   // Guardar configuración general
   const handleSaveChanges = async (e: React.FormEvent) => {
@@ -700,7 +706,7 @@ export default function ConfiguracionPage() {
     );
   }
 
-  if (!isAdmin) {
+  if (!isTenantAdmin) {
     return null;
   }
 

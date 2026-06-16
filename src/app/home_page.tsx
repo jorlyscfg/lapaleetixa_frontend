@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth, useFrappeGetCall } from "frappe-react-sdk";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSaaSConfig } from "./providers";
 
 interface MetricState {
@@ -26,10 +26,33 @@ interface MetricState {
   }>;
 }
 
+export const getCookieValue = (name: string) => {
+  if (typeof document === "undefined") return "";
+
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(";").shift() || "";
+  return "";
+};
+
+export const isExplicitPlatformContext = (pathname: string, tenantName: string) => {
+  if (pathname.startsWith("/c/")) return false;
+
+  return tenantName === "master" || tenantName === "frontend" || !tenantName;
+};
+
+export const getCentralSiteUrl = (protocol: string, host: string) => `${protocol}//${host}`;
+
 export default function HomePage() {
   const { currentUser, login, logout, isLoading: authLoading, error: authError } = useFrappeAuth();
   const { saasConfig, configLoading } = useSaaSConfig();
   const router = useRouter();
+  const pathname = usePathname();
+  const tenantName = getCookieValue("tenant_name");
+  const isPlatformContext = isExplicitPlatformContext(pathname, tenantName);
+  const masterSiteUrl = typeof window !== "undefined"
+    ? getCentralSiteUrl(window.location.protocol, window.location.host)
+    : "http://localhost:3000";
   
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,12 +64,9 @@ export default function HomePage() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   
-  // Multi-tenant master site landing states
-  const [isMasterSite, setIsMasterSite] = useState(true);
+  // Platform landing states
   const [targetSubdomain, setTargetSubdomain] = useState("");
   const [redirectError, setRedirectError] = useState<string | null>(null);
-  const [domainSuffix, setDomainSuffix] = useState(".localhost");
-  const [masterSiteUrl, setMasterSiteUrl] = useState("http://localhost:3000");
 
   const setCookie = (name: string, value: string, days = 30) => {
     if (typeof window !== "undefined") {
@@ -64,12 +84,11 @@ export default function HomePage() {
   // Platform admin states
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformTenants, setPlatformTenants] = useState<any[]>([]);
-  const [adminLoginActive, setAdminLoginActive] = useState(false);
 
   const { data: platformDataRaw, error: platformError, mutate: mutatePlatform } = useFrappeGetCall(
     "paletixa_saas.paletixa_saas.api.get_platform_admin_dashboard",
     {},
-    (isMasterSite && currentUser && (adminLoginActive || isSuperAdminAccount(currentUser))) ? "platform_admin_dashboard" : null
+    (isPlatformContext && currentUser && isSuperAdminAccount(currentUser)) ? "platform_admin_dashboard" : null
   );
 
   useEffect(() => {
@@ -97,30 +116,15 @@ export default function HomePage() {
   const { data: metricsRaw, isLoading: metricsLoading } = useFrappeGetCall(
     "paletixa_saas.paletixa_saas.api.get_admin_dashboard_metrics",
     {},
-    (isAdmin && !isMasterSite) ? "saas_admin_metrics" : null
+    (isAdmin && !isPlatformContext) ? "saas_admin_metrics" : null
   );
   const metrics: MetricState | null = (metricsRaw as { message?: { metrics?: MetricState } })?.message?.metrics || null;
 
-  // Dynamic host and base domain suffix detection
+  // Load tenant context and recent workspaces
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const hostname = window.location.hostname;
-      const host = window.location.host;
-      
-      setIsMasterSite(true);
-      setMasterSiteUrl(`${window.location.protocol}//${host}`);
-      if (hostname.startsWith("erpadmin")) {
-        setAdminLoginActive(true);
-      }
-      
       // Parse active tenant name from cookies to auto-populate workspace if present
-      const getCookie = (name: string) => {
-        const value = `; ${document.cookie}`;
-        const parts = value.split(`; ${name}=`);
-        if (parts.length === 2) return parts.pop()?.split(';').shift() || "";
-        return "";
-      };
-      const activeTenant = getCookie("tenant_name");
+      const activeTenant = getCookieValue("tenant_name");
       if (activeTenant && activeTenant !== "frontend" && activeTenant !== "master") {
         setWorkspace(activeTenant);
       }
@@ -135,7 +139,7 @@ export default function HomePage() {
         }
       }
     }
-  }, []);
+  }, [pathname]);
 
   const handleTenantRedirect = (e: React.FormEvent) => {
     e.preventDefault();
@@ -395,7 +399,7 @@ export default function HomePage() {
   }
 
   // 1. Check if the current tenant is inactive
-  if (!configLoading && saasConfig && (saasConfig as any).is_active === false && !isMasterSite) {
+  if (!configLoading && saasConfig && (saasConfig as any).is_active === false && !isPlatformContext) {
     return (
       <div className="relative flex min-h-screen items-center justify-center bg-slate-950 text-slate-100 font-sans overflow-hidden">
         {/* Decorative background gradients */}
@@ -1011,7 +1015,7 @@ export default function HomePage() {
               className="mx-auto h-12 w-12 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg mb-4 animate-bounce"
               style={{ backgroundColor: activeColor }}
             >
-              {isMasterSite ? "S" : (saasConfig?.client_name?.[0] || "L")}
+              {isPlatformContext ? "S" : (saasConfig?.client_name?.[0] || "L")}
             </div>
             <h2 className="text-2xl font-extrabold tracking-tight text-white">
               Portal de la Plataforma
@@ -1131,7 +1135,7 @@ export default function HomePage() {
           
           {/* Registro de Inquilino / Retorno a Landing */}
           <div className="mt-6 pt-6 border-t border-white/5 text-center">
-            {isMasterSite ? (
+            {isPlatformContext ? (
               <p className="text-xs text-slate-400">
                 ¿Querés usar la plataforma para tu empresa?{" "}
                 <a 

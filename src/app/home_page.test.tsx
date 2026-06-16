@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import HomePage from './home_page';
+import HomePage, { getCentralSiteUrl, isExplicitPlatformContext } from './home_page';
 
 const mockUseFrappeGetCall = vi.fn(() => ({
   data: null,
@@ -10,10 +10,13 @@ const mockUseFrappeGetCall = vi.fn(() => ({
 }));
 
 // Mock useRouter
+let mockPathname = '/';
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
     push: vi.fn(),
   }),
+  usePathname: () => mockPathname,
 }));
 
 // Mock useFrappeAuth variables
@@ -73,6 +76,16 @@ describe('HomePage Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseFrappeGetCall.mockClear();
+    mockCurrentUser = null;
+    mockIsLoading = false;
+    mockPathname = '/';
+    document.cookie = 'tenant_name=; Max-Age=0; path=/';
+  });
+
+  it('treats /c routes as tenant context and keeps the central URL on the current origin', () => {
+    expect(isExplicitPlatformContext('/c/acme', 'frontend')).toBe(false);
+    expect(isExplicitPlatformContext('/', 'master')).toBe(true);
+    expect(getCentralSiteUrl('http:', 'mytenant.localhost:3000')).toBe('http://mytenant.localhost:3000');
   });
 
   it('renders loader when auth is loading', () => {
@@ -113,9 +126,11 @@ describe('HomePage Component', () => {
     expect(screen.getByText('Contraseña')).toBeInTheDocument();
   });
 
-  it('does not request platform admin dashboard on a non-admin master site', async () => {
+  it('does not request platform admin dashboard on a tenant route even for admin users', async () => {
     mockCurrentUser = 'admin@example.com';
     mockIsLoading = false;
+    mockPathname = '/c/acme';
+    document.cookie = 'tenant_name=acme; path=/';
 
     global.fetch = vi.fn().mockImplementation(() =>
       Promise.resolve({
@@ -142,6 +157,8 @@ describe('HomePage Component', () => {
   it('requests platform admin dashboard for the superadmin account', async () => {
     mockCurrentUser = 'admin@jegdev.com';
     mockIsLoading = false;
+    mockPathname = '/';
+    document.cookie = 'tenant_name=master; path=/';
 
     global.fetch = vi.fn().mockImplementation(() =>
       Promise.resolve({
