@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useFrappeAuth, useFrappeGetCall } from "frappe-react-sdk";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useSaaSConfig } from "./providers";
 
 interface MetricState {
@@ -35,10 +35,13 @@ export const getCookieValue = (name: string) => {
   return "";
 };
 
-export const isExplicitPlatformContext = (pathname: string, tenantName: string) => {
-  if (pathname.startsWith("/c/")) return false;
+export const isSuperAdminAccount = (user?: string | null) => {
+  const normalized = user?.toLowerCase() || "";
+  return normalized === "admin@jegdev.com" || user === "Administrator";
+};
 
-  return tenantName === "master" || tenantName === "frontend" || !tenantName;
+export const isExplicitPlatformContext = (tenantName: string, currentUser?: string | null) => {
+  return tenantName === "master" || tenantName === "frontend" || !tenantName || isSuperAdminAccount(currentUser);
 };
 
 export const getCentralSiteUrl = (protocol: string, host: string) => `${protocol}//${host}`;
@@ -47,9 +50,8 @@ export default function HomePage() {
   const { currentUser, login, logout, isLoading: authLoading, error: authError } = useFrappeAuth();
   const { saasConfig, configLoading } = useSaaSConfig();
   const router = useRouter();
-  const pathname = usePathname();
   const tenantName = getCookieValue("tenant_name");
-  const isPlatformContext = isExplicitPlatformContext(pathname, tenantName);
+  const isPlatformContext = isExplicitPlatformContext(tenantName, currentUser);
   const masterSiteUrl = typeof window !== "undefined"
     ? getCentralSiteUrl(window.location.protocol, window.location.host)
     : "http://localhost:3000";
@@ -74,11 +76,6 @@ export default function HomePage() {
       expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
       document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;sameSite=lax${window.location.protocol === "https:" ? ";secure" : ""}`;
     }
-  };
-
-  const isSuperAdminAccount = (user?: string | null) => {
-    const normalized = user?.toLowerCase() || "";
-    return normalized === "admin@jegdev.com" || user === "Administrator";
   };
 
   // Platform admin states
@@ -139,7 +136,7 @@ export default function HomePage() {
         }
       }
     }
-  }, [pathname]);
+  }, []);
 
   const handleTenantRedirect = (e: React.FormEvent) => {
     e.preventDefault();

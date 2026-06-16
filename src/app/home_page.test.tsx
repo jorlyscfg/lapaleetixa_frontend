@@ -83,8 +83,9 @@ describe('HomePage Component', () => {
   });
 
   it('treats /c routes as tenant context and keeps the central URL on the current origin', () => {
-    expect(isExplicitPlatformContext('/c/acme', 'frontend')).toBe(false);
-    expect(isExplicitPlatformContext('/', 'master')).toBe(true);
+    expect(isExplicitPlatformContext('frontend', 'admin@jegdev.com')).toBe(true);
+    expect(isExplicitPlatformContext('acme', 'admin@jegdev.com')).toBe(true);
+    expect(isExplicitPlatformContext('acme', 'tenant@example.com')).toBe(false);
     expect(getCentralSiteUrl('http:', 'mytenant.localhost:3000')).toBe('http://mytenant.localhost:3000');
   });
 
@@ -129,7 +130,6 @@ describe('HomePage Component', () => {
   it('does not request platform admin dashboard on a tenant route even for admin users', async () => {
     mockCurrentUser = 'admin@example.com';
     mockIsLoading = false;
-    mockPathname = '/c/acme';
     document.cookie = 'tenant_name=acme; path=/';
 
     global.fetch = vi.fn().mockImplementation(() =>
@@ -157,8 +157,34 @@ describe('HomePage Component', () => {
   it('requests platform admin dashboard for the superadmin account', async () => {
     mockCurrentUser = 'admin@jegdev.com';
     mockIsLoading = false;
-    mockPathname = '/';
     document.cookie = 'tenant_name=master; path=/';
+
+    global.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          message: {
+            client_name: 'La Paletixa Test',
+            colors: { primary: '#3498db' },
+            features: { pos: true, production: true }
+          }
+        }),
+      })
+    );
+
+    render(<HomePage />);
+
+    const platformDashboardCall = mockUseFrappeGetCall.mock.calls.find(
+      ([method]) => method === 'paletixa_saas.paletixa_saas.api.get_platform_admin_dashboard'
+    );
+
+    expect(platformDashboardCall?.[2]).toBe('platform_admin_dashboard');
+  });
+
+  it('prefers platform context for the superadmin account even if a tenant cookie is stale', async () => {
+    mockCurrentUser = 'admin@jegdev.com';
+    mockIsLoading = false;
+    document.cookie = 'tenant_name=acme; path=/';
 
     global.fetch = vi.fn().mockImplementation(() =>
       Promise.resolve({
