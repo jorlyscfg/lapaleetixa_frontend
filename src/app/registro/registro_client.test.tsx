@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RegistroPageClient } from "./registro_client";
 
 const push = vi.fn();
+let mockWorkspaceId: string | null = null;
 let mockSubdomain: string | null = null;
 let mockToken: string | null = null;
 
@@ -12,12 +13,20 @@ vi.mock("next/navigation", () => ({
     push,
   }),
   useSearchParams: () => ({
-    get: (key: string) => (key === "subdomain" ? mockSubdomain : key === "token" ? mockToken : null),
+    get: (key: string) =>
+      key === "workspace_id"
+        ? mockWorkspaceId
+        : key === "subdomain"
+          ? mockSubdomain
+          : key === "token"
+            ? mockToken
+            : null,
   }),
 }));
 
 describe("RegistroPageClient", () => {
   beforeEach(() => {
+    mockWorkspaceId = null;
     mockSubdomain = null;
     mockToken = null;
     push.mockReset();
@@ -30,10 +39,11 @@ describe("RegistroPageClient", () => {
     );
   });
 
-  it("renders the default company-creation form when no subdomain query param is present", () => {
+  it("renders the default company-creation form when no workspace_id query param is present", () => {
     render(<RegistroPageClient />);
 
     expect(screen.getByText("Creá tu Inquilino Corporativo")).toBeInTheDocument();
+    expect(screen.getByText("Workspace ID")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Crear Compañía Dedicada" })).toBeInTheDocument();
     expect(screen.queryByText("Desplegando tu Empresa")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("mi-empresa")).toHaveValue("");
@@ -51,7 +61,7 @@ describe("RegistroPageClient", () => {
     expect(screen.getByTitle("Ocultar Contraseña")).toBeInTheDocument();
   });
 
-  it("keeps the provisioning flow when subdomain is present in the URL", async () => {
+  it("keeps the provisioning flow when the legacy subdomain query param is present in the URL", async () => {
     mockSubdomain = "acme";
     mockToken = "token-123";
 
@@ -64,11 +74,28 @@ describe("RegistroPageClient", () => {
     expect(screen.queryByRole("button", { name: "Crear Compañía Dedicada" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Creando base de datos MariaDB...").length).toBeGreaterThan(0);
     expect(global.fetch).toHaveBeenCalledWith(
-      "/api/method/paletixa_saas.paletixa_saas.api.get_tenant_status?subdomain=acme&token=token-123",
+      "/api/method/paletixa_saas.paletixa_saas.api.get_tenant_status?workspace_id=acme&token=token-123",
     );
   });
 
-  it("keeps the provisioning flow and pushes the updated subdomain after a successful submit", async () => {
+  it("keeps the provisioning flow when workspace_id is present in the URL", async () => {
+    mockWorkspaceId = "acme";
+    mockToken = "token-123";
+
+    render(<RegistroPageClient />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Desplegando tu Empresa")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "Crear Compañía Dedicada" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("Creando base de datos MariaDB...").length).toBeGreaterThan(0);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/method/paletixa_saas.paletixa_saas.api.get_tenant_status?workspace_id=acme&token=token-123",
+    );
+  });
+
+  it("keeps the provisioning flow and pushes the updated workspace ID after a successful submit", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -105,6 +132,7 @@ describe("RegistroPageClient", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          workspace_id: "acme",
           subdomain: "acme",
           company_name: "Acme Corp",
           admin_email: "admin@acme.com",
@@ -112,6 +140,6 @@ describe("RegistroPageClient", () => {
         }),
       },
     );
-    expect(push).toHaveBeenCalledWith("/registro?subdomain=acme&token=request-token-123");
+    expect(push).toHaveBeenCalledWith("/registro?workspace_id=acme&token=request-token-123");
   });
 });

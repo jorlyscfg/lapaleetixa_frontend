@@ -6,13 +6,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 export function RegistroPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const subdomainParam = searchParams.get("subdomain");
+  const workspaceIdParam = searchParams.get("workspace_id") ?? searchParams.get("subdomain");
   const tokenParam = searchParams.get("token");
-  const isProvisioningFromUrl = Boolean(subdomainParam);
+  const isProvisioningFromUrl = Boolean(workspaceIdParam);
 
   // Form states
   const [companyName, setCompanyName] = useState("");
-  const [subdomain, setSubdomain] = useState(subdomainParam ?? "");
+  const [workspaceId, setWorkspaceId] = useState(workspaceIdParam ?? "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -31,11 +31,11 @@ export function RegistroPageClient() {
 
   // Polling for provisioning status
   useEffect(() => {
-    if (!provisioning || !subdomain) return;
+    if (!provisioning || !workspaceId) return;
 
     const checkStatus = async () => {
       try {
-        const query = new URLSearchParams({ subdomain });
+        const query = new URLSearchParams({ workspace_id: workspaceId });
         if (statusToken) {
           query.set("token", statusToken);
         }
@@ -91,7 +91,7 @@ export function RegistroPageClient() {
             // Set cookie so they land directly on their workspace context
             const expires = new Date();
             expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000);
-            document.cookie = `tenant_name=${subdomain};expires=${expires.toUTCString()};path=/;sameSite=lax${protocol === "https:" ? ";secure" : ""}`;
+            document.cookie = `tenant_name=${workspaceId};expires=${expires.toUTCString()};path=/;sameSite=lax${protocol === "https:" ? ";secure" : ""}`;
 
             window.location.href = "/";
           }, 2000);
@@ -112,7 +112,7 @@ export function RegistroPageClient() {
     checkStatus(); // Initial call
 
     return () => clearInterval(pollIntervalId);
-  }, [provisioning, subdomain, statusToken]);
+  }, [provisioning, workspaceId, statusToken]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,8 +121,8 @@ export function RegistroPageClient() {
     setErrorLog(null);
 
     // Basic client validation
-    if (!subdomain.match(/^[a-zA-Z0-9-]+$/)) {
-      setError("El subdominio solo puede contener letras, números y guiones.");
+    if (!workspaceId.match(/^[a-zA-Z0-9-]+$/)) {
+      setError("El Workspace ID solo puede contener letras, números y guiones.");
       setLoading(false);
       return;
     }
@@ -134,7 +134,8 @@ export function RegistroPageClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          subdomain,
+          workspace_id: workspaceId,
+          subdomain: workspaceId,
           company_name: companyName,
           admin_email: email,
           admin_password: password,
@@ -164,7 +165,7 @@ export function RegistroPageClient() {
       }
 
       // Update URL query parameters silently
-      const query = new URLSearchParams({ subdomain });
+      const query = new URLSearchParams({ workspace_id: workspaceId });
       if (data.message?.request_token) {
         query.set("token", data.message.request_token);
       }
@@ -176,7 +177,7 @@ export function RegistroPageClient() {
   };
 
   const steps = [
-    { label: "Validando solicitud...", desc: "Comprobando disponibilidad del identificador" },
+    { label: "Validando solicitud...", desc: "Comprobando disponibilidad del Workspace ID" },
     { label: "Creando base de datos MariaDB...", desc: "Esto puede tardar unos minutos" },
     { label: "Instalando módulos y apps...", desc: "Instalando ERPNext y personalizaciones de SaaS" },
     { label: "Configurando identidad y sucursales...", desc: "Inicializando compañía y roles por defecto" },
@@ -226,20 +227,20 @@ export function RegistroPageClient() {
 
             <div>
               <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">
-                Identificador de la Empresa (Workspace ID)
+                Workspace ID
               </label>
               <div className="relative flex items-center">
                 <input
                   type="text"
                   required
-                  value={subdomain}
-                  onChange={(e) => setSubdomain(e.target.value.toLowerCase().replace(/\s+/g, ""))}
+                  value={workspaceId}
+                  onChange={(e) => setWorkspaceId(e.target.value.toLowerCase().replace(/\s+/g, ""))}
                   placeholder="mi-empresa"
                   className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-white placeholder-slate-650 transition-all focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
               <p className="mt-1 pl-1 text-left text-[10px] text-slate-500">
-                Esto definirá tus enlaces públicos (ej. `tudominio.com/c/mi-empresa/...`). Solo minúsculas, números y guiones.
+                Esto definirá tu Workspace ID y tus enlaces públicos (ej. `tudominio.com/c/mi-empresa/...`). Solo minúsculas, números y guiones.
               </p>
             </div>
 
