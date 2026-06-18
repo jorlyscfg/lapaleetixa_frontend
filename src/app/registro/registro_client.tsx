@@ -50,12 +50,12 @@ export function RegistroPageClient() {
         const progress = data.message?.progress;
         const message = data.message?.message;
 
-        const stepByStatus: Record<string, number> = {
-          Pending: 0,
-          "Creating Site": 1,
-          "Installing Apps": 2,
-          "Configuring Identity": 3,
-          "In Progress": 1,
+        const stepByPhase: Record<string, number> = {
+          pending: 0,
+          creating_site: 1,
+          installing_apps: 2,
+          configuring_identity: 3,
+          completed: 4,
         };
 
         if (status === "NotFound") {
@@ -66,8 +66,8 @@ export function RegistroPageClient() {
           return;
         }
 
-        if (status === "In Progress" || status === "Creating Site" || status === "Installing Apps" || status === "Configuring Identity") {
-          const nextStep = stepByStatus[status] ?? (phase === "installing_apps" ? 2 : phase === "configuring_identity" ? 3 : 1);
+        if (status === "Pending" || status === "In Progress") {
+          const nextStep = stepByPhase[String(phase || "").toLowerCase()] ?? (status === "Pending" ? 0 : 1);
           setCurrentStep(nextStep);
 
           if (typeof progress === "number") {
