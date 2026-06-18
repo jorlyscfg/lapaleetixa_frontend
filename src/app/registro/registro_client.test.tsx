@@ -39,6 +39,18 @@ describe("RegistroPageClient", () => {
     expect(screen.getByPlaceholderText("mi-empresa")).toHaveValue("");
   });
 
+  it("toggles password visibility in the registration form", () => {
+    render(<RegistroPageClient />);
+
+    const passwordInput = screen.getByPlaceholderText("••••••••") as HTMLInputElement;
+    expect(passwordInput.type).toBe("password");
+
+    fireEvent.click(screen.getByTitle("Mostrar Contraseña"));
+
+    expect(passwordInput.type).toBe("text");
+    expect(screen.getByTitle("Ocultar Contraseña")).toBeInTheDocument();
+  });
+
   it("keeps the provisioning flow when subdomain is present in the URL", async () => {
     mockSubdomain = "acme";
     mockToken = "token-123";
@@ -50,7 +62,7 @@ describe("RegistroPageClient", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Crear Compañía Dedicada" })).not.toBeInTheDocument();
-    expect(screen.getByText("Creando base de datos MariaDB...")).toBeInTheDocument();
+    expect(screen.getAllByText("Creando base de datos MariaDB...").length).toBeGreaterThan(0);
     expect(global.fetch).toHaveBeenCalledWith(
       "/api/method/paletixa_saas.paletixa_saas.api.get_tenant_status?subdomain=acme&token=token-123",
     );

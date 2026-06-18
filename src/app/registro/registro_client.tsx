@@ -21,8 +21,13 @@ export function RegistroPageClient() {
   const [loading, setLoading] = useState(isProvisioningFromUrl);
   const [provisioning, setProvisioning] = useState(isProvisioningFromUrl);
   const [currentStep, setCurrentStep] = useState(isProvisioningFromUrl ? 1 : 0);
+  const [provisioningProgress, setProvisioningProgress] = useState(isProvisioningFromUrl ? 25 : 0);
+  const [provisioningMessage, setProvisioningMessage] = useState<string | null>(
+    isProvisioningFromUrl ? "Creando la base de datos y preparando el sitio..." : null,
+  );
   const [errorLog, setErrorLog] = useState<string | null>(null);
   const [statusToken, setStatusToken] = useState(tokenParam ?? "");
+  const [showPassword, setShowPassword] = useState(false);
 
   // Polling for provisioning status
   useEffect(() => {
@@ -41,13 +46,41 @@ export function RegistroPageClient() {
         const data = await res.json();
         const status = data.message?.status;
         const log = data.message?.error_log;
+        const phase = data.message?.phase;
+        const progress = data.message?.progress;
+        const message = data.message?.message;
 
-        if (status === "In Progress") {
-          // Advance steps dynamically based on time or just stay on step 2
-          setCurrentStep(2);
+        const stepByStatus: Record<string, number> = {
+          Pending: 0,
+          "Creating Site": 1,
+          "Installing Apps": 2,
+          "Configuring Identity": 3,
+          "In Progress": 1,
+        };
+
+        if (status === "NotFound") {
+          setProvisioning(false);
+          setLoading(false);
+          setError("No se encontró la solicitud de aprovisionamiento o el token expiró.");
+          clearInterval(pollIntervalId);
+          return;
+        }
+
+        if (status === "In Progress" || status === "Creating Site" || status === "Installing Apps" || status === "Configuring Identity") {
+          const nextStep = stepByStatus[status] ?? (phase === "installing_apps" ? 2 : phase === "configuring_identity" ? 3 : 1);
+          setCurrentStep(nextStep);
+
+          if (typeof progress === "number") {
+            setProvisioningProgress(Math.max(10, Math.min(95, progress)));
+          }
+
+          if (message) {
+            setProvisioningMessage(message);
+          }
         } else if (status === "Completed") {
           setCurrentStep(4); // Finished
-          setProvisioning(false);
+          setProvisioningProgress(100);
+          setProvisioningMessage("¡Despliegue exitoso! Redireccionando...");
           setLoading(false);
           clearInterval(pollIntervalId);
 
@@ -124,6 +157,8 @@ export function RegistroPageClient() {
       // Successful request - enter provisioning mode
       setProvisioning(true);
       setCurrentStep(1);
+      setProvisioningProgress(25);
+      setProvisioningMessage("Creando la base de datos y preparando el sitio...");
       if (data.message?.request_token) {
         setStatusToken(data.message.request_token);
       }
@@ -141,8 +176,8 @@ export function RegistroPageClient() {
   };
 
   const steps = [
-    { label: "Validando solicitud...", desc: "Comprobando disponibilidad del subdominio" },
-    { label: "Creando base de datos MariaDB...", desc: "Esto puede tardar hasta 1-2 minutos" },
+    { label: "Validando solicitud...", desc: "Comprobando disponibilidad del identificador" },
+    { label: "Creando base de datos MariaDB...", desc: "Esto puede tardar unos minutos" },
     { label: "Instalando módulos y apps...", desc: "Instalando ERPNext y personalizaciones de SaaS" },
     { label: "Configurando identidad y sucursales...", desc: "Inicializando compañía y roles por defecto" },
     { label: "¡Despliegue exitoso!", desc: "Redireccionando a tu nuevo portal corporativo..." },
@@ -226,14 +261,33 @@ export function RegistroPageClient() {
               <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">
                 Contraseña de Administrador
               </label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-white placeholder-slate-650 transition-all focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
+              <div className="relative flex items-center">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 pr-12 text-sm text-white placeholder-slate-650 transition-all focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 text-slate-450 hover:text-white transition-colors cursor-pointer flex items-center justify-center p-1"
+                  title={showPassword ? "Ocultar Contraseña" : "Mostrar Contraseña"}
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a10.025 10.025 0 014.132-5.4M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 21l-2-2m-2-2L3 3" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
 
             {error && (
@@ -285,8 +339,23 @@ export function RegistroPageClient() {
                 {steps[currentStep]?.label || "Aprovisionando..."}
               </h3>
               <p className="text-center text-xs text-slate-400">
-                {steps[currentStep]?.desc || "Por favor no cierres esta ventana"}
+                {provisioningMessage || steps[currentStep]?.desc || "Por favor no cierres esta ventana"}
               </p>
+
+              <div className="mt-4 w-full space-y-2">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/80">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 transition-all duration-700 ease-out"
+                    style={{ width: `${Math.min(100, Math.max(10, provisioningProgress))}%` }}
+                  />
+                </div>
+                <p className="text-center text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                  Paso {Math.min(currentStep + 1, 4)} de 4 · {provisioningProgress}%
+                </p>
+                <p className="text-center text-[10px] text-slate-500">
+                  El estado se verifica automáticamente cada 5 segundos.
+                </p>
+              </div>
             </div>
 
             {/* Stepper details */}
