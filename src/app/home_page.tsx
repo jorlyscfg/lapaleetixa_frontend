@@ -1145,13 +1145,13 @@ export default function HomePage() {
               </p>
             ) : (
               <p className="text-xs text-slate-400">
-                ¿Buscás otra empresa?{" "}
+                ¿Querés registrar tu empresa?{" "}
                 <a 
-                  href={masterSiteUrl}
+                  href="/registro"
                   className="font-bold hover:underline transition-colors"
                   style={{ color: activeColor }}
                 >
-                  Volver al inicio central
+                  Crear compañía
                 </a>
               </p>
             )}
